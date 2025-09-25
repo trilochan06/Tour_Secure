@@ -1,0 +1,31 @@
+{
+  "name": "tour-secure-pro-monorepo",
+  "version": "1.0.0",
+  "description": "A richer, runnable scaffold for **Smart Tourist Safety Monitoring & Incident Response System**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "leaflet": "^1.9.4",
+    "leaflet.heat": "^0.2.0",
+    "mongoose": "^8.18.1",
+    "morgan": "^1.10.1",
+    "react-leaflet": "^5.0.0",
+    "zod": "^4.1.10"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^24.5.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.2"
+  }
+}

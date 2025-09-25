@@ -1,0 +1,11 @@
+await c.hasRole(await c.REVOKER_ROLE(), issuer)
+await c.hasRole(await c.UPDATER_ROLE(), issuer)
+await c.hasRole(await c.ISSUER_ROLE(), issuer)
+// 3.2 Attach to your contract (you already did, reusing 'c')
+const issuer = new ethers.Wallet(pk).address; issuer
+const pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+// 3.1 Identify the issuer address (the one from your .env private key)
+await c.supportsInterface("0x80ac58cd");          // ERC721 -> true
+const c = await ethers.getContractAt("TouristID", addr);
+(await ethers.provider.getCode(addr)).length > 2   // should be true
+const addr = "0x5FbDB2315678afecb367f032d93F642f64180aa3";

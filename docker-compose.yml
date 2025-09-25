@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: toursecure
+      POSTGRES_PASSWORD: toursecure
+      POSTGRES_DB: toursecure
+    ports: ["5432:5432"]
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  geofencing:
+    build: ./services/geofencing
+    ports: ["8051:8051"]
+    volumes:
+      - ./services/geofencing/app:/app
+
+  anomaly:
+    build: ./services/anomaly
+    ports: ["8052:8052"]
+
+  blockchain:
+    build: ./blockchain
+    working_dir: /app
+    command: bash -lc "npx hardhat node & sleep 5 && npx hardhat run scripts/deploy.ts --network localhost && tail -f /dev/null"
+    ports: ["8545:8545"]
+    depends_on:
+      - db
+
+  backend:
+    build: ./backend
+    ports: ["8080:8080"]
+    environment:
+      DATABASE_URL: postgresql://toursecure:toursecure@db:5432/toursecure
+      GEOFENCE_URL: http://geofencing:8051
+      ANOMALY_URL: http://anomaly:8052
+      HARDHAT_RPC: http://blockchain:8545"
+    depends_on:
+      - db
+      - geofencing
+      - anomaly
+      - blockchain
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:5173"]
+    environment:
+      VITE_API_BASE: http://localhost:8080/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
+
