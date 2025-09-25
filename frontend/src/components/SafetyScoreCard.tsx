@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { http } from "@/lib/http";
-
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -8,14 +7,14 @@ import Textarea from "@/components/ui/Textarea";
 import Select from "@/components/ui/Select";
 import Loading from "@/components/ui/Loading";
 import Badge from "@/components/ui/Badge";
-import SafetyScoreCard from "@/components/SafetyScoreCard";
 import { useToast } from "@/components/ui/Toast";
+import SafetyScoreCard from "@/components/SafetyScoreCard";
 
 /* ---------- types ---------- */
 type Review = {
   _id: string;
   place: string;
-  rating: number;         // 1..5
+  rating: number; // 1..5
   comment?: string;
   createdAt: string;
 };
@@ -23,21 +22,19 @@ type Review = {
 /* ---------- api helpers ---------- */
 async function fetchReviews(): Promise<Review[]> {
   const { data } = await http.get("/reviews");
-  const arr = Array.isArray(data) ? data : (data?.items ?? []);
-  return (arr as Review[]).sort(
+  return (data as Review[]).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }
 
-async function createReview(input: { place: string; rating: number; comment?: string }) {
-  const { data } = await http.post("/reviews", {
-    areaName: input.place,   // backend expects areaName
-    rating: input.rating,
-    text: input.comment,
-  });
+async function createReview(input: {
+  place: string;
+  rating: number;
+  comment?: string;
+}) {
+  const { data } = await http.post("/reviews", input);
   return data;
 }
-
 
 /* ---------- rating stars input ---------- */
 function StarInput({
@@ -50,7 +47,11 @@ function StarInput({
   size?: number;
 }) {
   return (
-    <div className="inline-flex items-center gap-1" role="radiogroup" aria-label="Rating">
+    <div
+      className="inline-flex items-center gap-1"
+      role="radiogroup"
+      aria-label="Rating"
+    >
       {[1, 2, 3, 4, 5].map((n) => {
         const filled = n <= value;
         return (
@@ -62,7 +63,9 @@ function StarInput({
             aria-label={`${n} star${n > 1 ? "s" : ""}`}
             onClick={() => onChange(n)}
             className={`transition ${
-              filled ? "text-yellow-500" : "text-neutral-300 hover:text-neutral-400"
+              filled
+                ? "text-yellow-500"
+                : "text-neutral-300 hover:text-neutral-400"
             }`}
           >
             <svg
@@ -109,6 +112,9 @@ export default function Reviews() {
   const [page, setPage] = useState(1);
   const pageSize = 6;
 
+  // last updated area
+  const [lastArea, setLastArea] = useState<{ id: string } | null>(null);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -118,7 +124,10 @@ export default function Reviews() {
         if (!alive) return;
         setItems(list);
       } catch (e: any) {
-        notify({ tone: "error", message: e?.message ?? "Failed to load reviews" });
+        notify({
+          tone: "error",
+          message: e?.message ?? "Failed to load reviews",
+        });
       } finally {
         if (alive) setLoading(false);
       }
@@ -132,7 +141,12 @@ export default function Reviews() {
     const q = search.trim().toLowerCase();
     return (items ?? [])
       .filter((r) => r.rating >= minStars)
-      .filter((r) => (q ? r.place.toLowerCase().includes(q) || r.comment?.toLowerCase().includes(q) : true));
+      .filter((r) =>
+        q
+          ? r.place.toLowerCase().includes(q) ||
+            r.comment?.toLowerCase().includes(q)
+          : true
+      );
   }, [items, minStars, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -146,14 +160,25 @@ export default function Reviews() {
     }
     try {
       setSubmitting(true);
-      const created = await createReview({ place: place.trim(), rating, comment: comment.trim() || undefined });
-      // optimistic update at the top
-      setItems((s) => [created, ...(s ?? [])]);
+      const { review, area } = await createReview({
+        place: place.trim(),
+        rating,
+        comment: comment.trim() || undefined,
+      });
+
+      setItems((s) => [review, ...(s ?? [])]);
       setPlace("");
       setRating(5);
       setComment("");
       setPage(1);
-      notify({ tone: "success", title: "Thanks!", message: "Your review has been added." });
+
+      if (area?.id) setLastArea({ id: area.id });
+
+      notify({
+        tone: "success",
+        title: "Thanks!",
+        message: "Your review has been added.",
+      });
     } catch (e: any) {
       notify({ tone: "error", message: e?.message ?? "Failed to submit review" });
     } finally {
@@ -206,11 +231,17 @@ export default function Reviews() {
                 className="w-56"
                 placeholder="Search place or text…"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
               />
               <Select
                 value={String(minStars)}
-                onChange={(e) => { setMinStars(Number(e.target.value) as any); setPage(1); }}
+                onChange={(e) => {
+                  setMinStars(Number(e.target.value) as any);
+                  setPage(1);
+                }}
               >
                 <option value="0">All ratings</option>
                 <option value="5">5★ only</option>
@@ -240,7 +271,11 @@ export default function Reviews() {
                         <div className="text-right">
                           <RatingBadge rating={r.rating} />
                           <div className="mt-1">
-                            <StarInput value={r.rating} onChange={() => {}} size={16} />
+                            <StarInput
+                              value={r.rating}
+                              onChange={() => {}}
+                              size={16}
+                            />
                           </div>
                         </div>
                       </div>
@@ -260,10 +295,18 @@ export default function Reviews() {
                       Page {page} of {totalPages} • {filtered.length} total
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                      <Button
+                        variant="outline"
+                        disabled={page === 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
                         Prev
                       </Button>
-                      <Button variant="outline" disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                      <Button
+                        variant="outline"
+                        disabled={page === totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      >
                         Next
                       </Button>
                     </div>
@@ -274,6 +317,14 @@ export default function Reviews() {
           </CardBody>
         </Card>
       </div>
+
+      {/* safety score for last reviewed area */}
+      {lastArea && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold">Updated Safety Score</h2>
+          <SafetyScoreCard areaId={lastArea.id} />
+        </div>
+      )}
     </>
   );
 }
