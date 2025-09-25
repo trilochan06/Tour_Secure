@@ -1,15 +1,31 @@
+// frontend/src/pages/DigitalID.tsx
 import { useEffect, useState } from "react";
-import axios from "axios";
-import { API_BASE } from "@/lib/api";
+import { http } from "@/lib/http";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import { useToast } from "@/components/ui/Toast";
+import WalletAddressInline from "@/components/WalletAddressInline";
+import { useAuth } from "@/context/AuthContext";
 
 type Entrypoint = "airport" | "hotel" | "checkpost";
 type DocType = "passport" | "aadhaar";
 type Contact = { name: string; phone: string };
 
+type TripResult = {
+  ok: boolean;
+  id: string;
+  tokenId: number;
+  validUntil: number; // epoch seconds
+};
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
+
 export default function DigitalID() {
+  const { user } = useAuth();
+  const { notify } = useToast();
+  const CURRENT_USER_ID = (user as any)?._id || (user as any)?.id || "";
+
   // form state
   const [walletAddress, setWalletAddress] = useState("");
   const [entrypoint, setEntrypoint] = useState<Entrypoint>("airport");
@@ -25,7 +41,7 @@ export default function DigitalID() {
   const [trip, setTrip] = useState<null | { id: string; tokenId: number; validUntil: number }>(null);
   const [qrUrl, setQrUrl] = useState<string>("");
 
-  // try to prefill wallet from MetaMask
+  // Prefill wallet from MetaMask (optional)
   useEffect(() => {
     (async () => {
       try {
@@ -33,42 +49,54 @@ export default function DigitalID() {
         if (!eth) return;
         const accounts = await eth.request({ method: "eth_requestAccounts" });
         if (accounts?.[0]) setWalletAddress(accounts[0]);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     })();
   }, []);
 
   function updateContact(i: number, key: keyof Contact, val: string) {
-    setContacts(list => list.map((c, idx) => (idx === i ? { ...c, [key]: val } : c)));
+    setContacts((list) => list.map((c, idx) => (idx === i ? { ...c, [key]: val } : c)));
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (!walletAddress) return setError("Enter wallet address");
-    if (!file) return setError("Attach Aadhaar/Passport file");
-    if (!startAt || !endAt) return setError("Pick start & end time");
+
+    // basic validation before sending
+    if (!walletAddress) return setError("Wallet address is required.");
+    if (!file) return setError("Attach Aadhaar/Passport file.");
+    if (!startAt || !endAt) return setError("Pick start & end time.");
 
     try {
       setCreating(true);
+
       const form = new FormData();
       form.append("walletAddress", walletAddress);
       form.append("entrypoint", entrypoint);
       form.append("docType", docType);
-      // send as ISO (backend expects ISO strings)
       form.append("startAt", new Date(startAt).toISOString());
       form.append("endAt", new Date(endAt).toISOString());
-      form.append("emergencyContacts", JSON.stringify(contacts.filter(c => c.name || c.phone)));
+      form.append(
+        "emergencyContacts",
+        JSON.stringify(contacts.filter((c) => c.name || c.phone))
+      );
+      // IMPORTANT: field name must be "document"
       form.append("document", file);
 
-      const { data } = await axios.post(`${API_BASE}/digital-id/trips`, form, {
+      const { data } = await http.post<TripResult>("/digital-id/trips", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      if (!data?.ok) throw new Error(data?.error || "Failed to create");
+      if (!data?.ok) throw new Error("Failed to create Digital ID");
       setTrip({ id: data.id, tokenId: data.tokenId, validUntil: data.validUntil });
       setQrUrl(""); // reset QR until user clicks
+
+      notify({ tone: "success", title: "Digital ID created", message: "You can now view the QR." });
     } catch (e: any) {
-      setError(e?.response?.data?.error || e?.message || "Unknown error");
+      const msg = e?.response?.data?.error || e?.message || "Unknown error";
+      setError(msg);
+      notify({ tone: "error", message: msg });
     } finally {
       setCreating(false);
     }
@@ -76,7 +104,7 @@ export default function DigitalID() {
 
   function handleShowQR() {
     if (!trip?.id) return;
-    // use a cache-buster so the <img> refreshes if clicked again
+    // Build absolute URL for the <img> tag
     setQrUrl(`${API_BASE}/digital-id/trips/${trip.id}/qr?ts=${Date.now()}`);
   }
 
@@ -118,11 +146,19 @@ export default function DigitalID() {
             {/* Start / End */}
             <label className="grid gap-2">
               <span className="text-sm text-neutral-600">Start (local)</span>
-              <Input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+              <Input
+                type="datetime-local"
+                value={startAt}
+                onChange={(e) => setStartAt(e.target.value)}
+              />
             </label>
             <label className="grid gap-2">
               <span className="text-sm text-neutral-600">End (local)</span>
-              <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+              <Input
+                type="datetime-local"
+                value={endAt}
+                onChange={(e) => setEndAt(e.target.value)}
+              />
             </label>
 
             {/* Wallet */}
@@ -133,12 +169,23 @@ export default function DigitalID() {
                 value={walletAddress}
                 onChange={(e) => setWalletAddress(e.target.value)}
               />
+              <div className="mt-2">
+                {/* Inline helper to generate/confirm a wallet and save to profile */}
+                <WalletAddressInline
+                  userId={CURRENT_USER_ID}
+                  value={walletAddress}
+                  onChange={setWalletAddress}
+                />
+              </div>
             </label>
 
             {/* File */}
             <label className="grid gap-2 md:col-span-2">
               <span className="text-sm text-neutral-600">Aadhaar/Passport File</span>
-              <Input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              <Input
+                type="file"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
               <span className="text-xs text-neutral-500">
                 Keep it under 5 MB (the backend rejects larger files).
               </span>

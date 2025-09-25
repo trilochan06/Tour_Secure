@@ -7,6 +7,8 @@ import cors from "cors";
 import morgan from "morgan";
 import { config } from "dotenv";
 import mongoose from "mongoose";
+import userWalletRouter from "./routes/userWallet.routes";
+import efirRouter from "./routes/efir.routes";
 
 import geoRouter from "./routes/geo.routes";
 import miscRouter from "./routes/misc.routes";
@@ -17,6 +19,9 @@ import debugRouter from "./routes/debug.routes";     // ✅ debug (dev only)
 
 import { getEnv } from "./config/env";
 
+// ⬇️ NEW: read cookies if your auth uses them (safe to include either way)
+import cookieParser from "cookie-parser"; 
+
 config();
 
 async function start() {
@@ -24,7 +29,16 @@ async function start() {
 
   // ✅ Better CORS: allow your React dev URLs
   const origins = (process.env.CORS_ORIGINS ?? "").split(",").filter(Boolean);
-  app.use(cors({ origin: origins.length ? origins : true }));
+  // backend/src/index.ts
+  app.use(cors({
+    origin: (process.env.CORS_ORIGINS ?? "").split(",").filter(Boolean),
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],   // <- add
+    methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"]
+  }));
+
+  // ⬇️ NEW: cookie parser should come before any auth middleware/routes
+  app.use(cookieParser());
 
   app.use(express.json({ limit: "1mb" }));
   app.use(morgan("dev"));
@@ -44,7 +58,11 @@ async function start() {
   app.use("/api/admin", adminRoutes);
   app.use("/api/safety-scores", safetyRouter);
   app.use("/api/reviews", reviewsRouter);
-
+  app.use("/api/user", userWalletRouter);
+  
+  
+  
+app.use("/api/efir", efirRouter);
   // ✅ Mount debug routes only in dev/test
   if (process.env.NODE_ENV !== "production") {
     app.use("/api/debug", debugRouter);
@@ -80,4 +98,4 @@ async function start() {
   });
 }
 
-start(); // ✅ don’t forget to call start()
+start(); // ✅ don’t forget to call start() THIS IS MY CURRENT FILE

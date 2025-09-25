@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import { API_BASE } from "@/lib/api";
+import { http } from "@/lib/http";
+
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -21,17 +21,22 @@ type Review = {
 
 /* ---------- api helpers ---------- */
 async function fetchReviews(): Promise<Review[]> {
-  const { data } = await axios.get(`${API_BASE}/reviews`);
-  // newest first
-  return (data as Review[]).sort(
+  const { data } = await http.get("/reviews");
+  const arr = Array.isArray(data) ? data : (data?.items ?? []);
+  return (arr as Review[]).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }
 
 async function createReview(input: { place: string; rating: number; comment?: string }) {
-  const { data } = await axios.post(`${API_BASE}/reviews`, input);
-  return data as Review;
+  const { data } = await http.post("/reviews", {
+    areaName: input.place,   // backend expects areaName
+    rating: input.rating,
+    text: input.comment,
+  });
+  return data;
 }
+
 
 /* ---------- rating stars input ---------- */
 function StarInput({

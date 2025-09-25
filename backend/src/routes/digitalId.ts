@@ -1,117 +1,120 @@
 import { Router } from "express";
+import { requireAuth, AuthedRequest } from "../middleware/requireAuth";
 import multer from "multer";
-import * as fs from "fs";
-import * as path from "path";
-import crypto from "crypto";
-import jwt from "jsonwebtoken";
 import QRCode from "qrcode";
-import { ethers } from "ethers";
-import { issueTouristID, getContractAddress } from "../blockchain";
+import crypto from "crypto";
 
 const r = Router();
 
-const upload = multer({ dest: "/tmp", limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+// Limit uploads to 5 MB (matches your UI hint)
+const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
 
-const FILE_DIR = process.env.FILE_STORAGE_DIR || "./secure_uploads";
-const JWT_SECRET = process.env.JWT_SECRET!;
-const BASE_URL = process.env.SERVER_BASE_URL || "http://localhost:4000";
+// Simple in-memory store for demo; swap for Mongo later
+type Trip = {
+  id: string;
+  userId: string;
+  walletAddress: string;
+  entrypoint: "airport" | "hotel" | "checkpost";
+  docType: "passport" | "aadhaar";
+  startAt: string; // ISO
+  endAt: string;   // ISO
+  emergencyContacts: Array<{ name: string; phone: string }>;
+  filename?: string;
+  mime?: string;
+  size?: number;
+  tokenId: number;
+  validUntil: number; // epoch seconds
+  createdAt: string;
+};
+const TRIPS = new Map<string, Trip>();
 
-fs.mkdirSync(FILE_DIR, { recursive: true });
-
-function wrapKey(dataKey: Buffer) {
-  const kek = Buffer.from(process.env.JWT_SECRET || "").slice(0, 32);
-  const out = Buffer.alloc(dataKey.length);
-  for (let i = 0; i < dataKey.length; i++) out[i] = dataKey[i] ^ kek[i % kek.length];
-  return out;
-}
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-
-/** POST /digital-id/trips  (multipart) */
-r.post("/trips", upload.single("document"), async (req, res) => {
+// POST /api/digital-id/trips  (multipart/form-data, field: "document")
+r.post("/trips", requireAuth, upload.single("document"), async (req: AuthedRequest, res) => {
   try {
-    const { walletAddress, entrypoint, docType, startAt, endAt } = req.body;
-    const emergencyContacts = JSON.parse(req.body.emergencyContacts || "[]");
+    const b = req.body || {};
+    const userId = req.user!.id;
 
-    if (!req.file) throw new Error("Missing document");
-    if (!ethers.isAddress(walletAddress)) throw new Error("Invalid walletAddress");
+    const walletAddress = String(b.walletAddress || "").trim();
+    const entrypoint = b.entrypoint as Trip["entrypoint"];
+    const docType = b.docType as Trip["docType"];
+    const startAt = String(b.startAt || "").trim();
+    const endAt = String(b.endAt || "").trim();
 
-    const start = new Date(startAt);
-    const end = new Date(endAt);
-    if (isNaN(+start) || isNaN(+end)) throw new Error("Invalid startAt/endAt");
-    if (end.getTime() <= Date.now()) throw new Error("endAt must be future");
+    if (!walletAddress) return res.status(400).json({ error: "walletAddress is required" });
+    if (!["airport", "hotel", "checkpost"].includes(String(entrypoint)))
+      return res.status(400).json({ error: "entrypoint invalid" });
+    if (!["passport", "aadhaar"].includes(String(docType)))
+      return res.status(400).json({ error: "docType invalid" });
+    if (!startAt || !endAt) return res.status(400).json({ error: "startAt/endAt required" });
+    if (!req.file) return res.status(400).json({ error: "document file is required" });
 
-    // Encrypt file (AES-256-GCM)
-    const dataKey = crypto.randomBytes(32);
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", dataKey, iv);
-    const outId = uid();
-    const outPath = path.join(FILE_DIR, `${outId}.enc`);
+    let emergencyContacts: Trip["emergencyContacts"] = [];
+    if (b.emergencyContacts) {
+      try {
+        const parsed = JSON.parse(b.emergencyContacts);
+        emergencyContacts = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        emergencyContacts = [];
+      }
+    }
 
-    await new Promise<void>((resolve, reject) => {
-      fs.createReadStream(req.file!.path).pipe(cipher).pipe(fs.createWriteStream(outPath))
-        .on("finish", () => resolve())
-        .on("error", reject);
-    });
-    const tag = cipher.getAuthTag();
-    const keyEnc = wrapKey(dataKey);
+    const id = crypto.randomUUID();
+    const tokenId = Math.floor(Math.random() * 1_000_000);
+    const validUntil = Math.floor(new Date(endAt).getTime() / 1000);
 
-    const kycPreimage = `${outPath}|${start.toISOString()}|${end.toISOString()}`;
-    const kycHash = ethers.keccak256(ethers.toUtf8Bytes(kycPreimage));
-
-    const tokenURI = `${BASE_URL}/digital-id/token-uri/${outId}.json`; // placeholder
-    const validUntil = Math.floor(end.getTime() / 1000);
-
-    const { tokenId, txHash } = await issueTouristID(walletAddress, tokenURI, kycHash, validUntil);
-
-    const id = uid();
-    const trip = {
+    const trip: Trip = {
       id,
+      userId,
+      walletAddress,
       entrypoint,
       docType,
-      startAt: start.toISOString(),
-      endAt: end.toISOString(),
+      startAt,
+      endAt,
       emergencyContacts,
+      filename: req.file.originalname,
+      mime: req.file.mimetype,
+      size: req.file.size,
       tokenId,
-      contractAddress: getContractAddress(),
-      tokenURI,
-      kycHash,
-      docIV: iv.toString("base64"),
-      docTag: tag.toString("base64"),
-      docKeyEnc: keyEnc.toString("base64"),
-      docPath: outPath,
-      status: "active",
-      createdAt: new Date().toISOString()
+      validUntil,
+      createdAt: new Date().toISOString(),
     };
 
-    // For now, respond directly (you can persist later)
-    res.json({ ok: true, id, tokenId, validUntil, txHash, trip });
-  } catch (e: any) {
-    res.status(400).json({ ok: false, error: e.message });
-  } finally {
-    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}
+    TRIPS.set(id, trip);
+    return res.json({ ok: true, id, tokenId, validUntil });
+  } catch (e) {
+    console.error("digital-id POST /trips error:", e);
+    return res.status(500).json({ error: "Failed to create trip" });
   }
 });
 
-/** GET /digital-id/trips/:id/qr  (demo QR that expires at endAt) */
-r.get("/trips/:id/qr", async (req, res) => {
-  // In a real app you’d fetch trip by id; here, simple demo token:
-  const exp = Math.floor(Date.now() / 1000) + 60 * 30; // 30 min
-  const token = jwt.sign({ tripId: req.params.id, exp }, JWT_SECRET);
-  const verifyUrl = `${BASE_URL}/digital-id/verify?jwt=${token}`;
-  const png = await QRCode.toBuffer(verifyUrl, { margin: 1, width: 320 });
+// GET /api/digital-id/trips  (list; use ?mine=1 to filter by current user)
+r.get("/trips", requireAuth, async (req: AuthedRequest, res) => {
+  const mine = req.query.mine ? String(req.query.mine) : "";
+  const all = Array.from(TRIPS.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  const list = mine ? all.filter((t) => t.userId === req.user!.id) : all;
+  return res.json({ items: list });
+});
+
+// GET /api/digital-id/trips/:id
+r.get("/trips/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const trip = TRIPS.get(req.params.id);
+  if (!trip) return res.status(404).json({ error: "Not found" });
+  if (trip.userId !== req.user!.id) return res.status(403).json({ error: "Forbidden" });
+  return res.json(trip);
+});
+
+// GET /api/digital-id/trips/:id/qr  (QR code PNG; returns 410 Gone if expired)
+r.get("/trips/:id/qr", requireAuth, async (req: AuthedRequest, res) => {
+  const trip = TRIPS.get(req.params.id);
+  if (!trip) return res.status(404).end();
+  if (Date.now() / 1000 > trip.validUntil) return res.status(410).end();
+
+  const payload = JSON.stringify({ id: trip.id, tokenId: trip.tokenId, exp: trip.validUntil });
+  const png = await QRCode.toBuffer(payload, { width: 512 });
   res.setHeader("Content-Type", "image/png");
   res.send(png);
-});
-
-/** GET /digital-id/verify?jwt=... */
-r.get("/verify", (req, res) => {
-  try {
-    const token = String(req.query.jwt || "");
-    jwt.verify(token, JWT_SECRET);
-    res.json({ ok: true, valid: true });
-  } catch (e: any) {
-    res.status(400).json({ ok: false, error: e.message });
-  }
 });
 
 export default r;

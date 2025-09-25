@@ -1,6 +1,6 @@
+// frontend/src/pages/Itinerary.tsx
 import { useEffect, useMemo, useState } from "react";
-import { http } from '@/lib/http';
-import { API_BASE } from "@/lib/api";
+import { http } from "@/lib/http";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -22,13 +22,16 @@ type Item = {
 };
 
 async function fetchItems(): Promise<Item[]> {
-  const { data } = await http.get(`${API_BASE}/itinerary`);
-  return data as Item[];
+  const { data } = await http.get("/itinerary"); // use shared client
+  const arr = Array.isArray(data) ? data : (data?.items ?? []); // always an array
+  return (arr as Item[]).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 }
 
 async function createItem(input: { title: string; date?: string; location?: string; notes?: string }) {
-  const { data } = await http.post(`${API_BASE}/itinerary`, input);
-  return data as Item;
+  const { data } = await http.post("/itinerary", input); // use shared client
+  return (data?.item ?? data) as Item; // accept either shape
 }
 
 /* ------------ page ------------ */
@@ -64,7 +67,7 @@ export default function Itinerary() {
         if (!alive) return;
         setItems(list);
       } catch (e: any) {
-        notify({ tone: "error", message: e?.message ?? "Failed to load itinerary" });
+        notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to load itinerary" });
       } finally {
         if (alive) setLoading(false);
       }
@@ -125,7 +128,7 @@ export default function Itinerary() {
       setTitle(""); setDate(""); setLocation(""); setNotes("");
       notify({ tone: "success", title: "Added", message: "Itinerary item created." });
     } catch (e: any) {
-      notify({ tone: "error", message: e?.message ?? "Failed to add item" });
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to add item" });
     } finally {
       setSubmitting(false);
     }

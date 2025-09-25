@@ -1,12 +1,14 @@
-import mongoose from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
-export type Role = "user" | "admin";
+const UserSchema = new Schema(
+  {
+    email: { type: String, index: true },
+    name: String,
+    // NEW: only public address
+    blockchainAddress: { type: String, index: true },
+  },
+  { timestamps: true }
+);
 
-const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
-  email: { type: String, required: true, trim: true, unique: true, lowercase: true },
-  passwordHash: { type: String, required: true },
-  role: { type: String, enum: ["user","admin"], default: "user" },
-}, { timestamps: true });
-
-export default mongoose.model("User", UserSchema);
+// Avoid OverwriteModelError during dev
+export default mongoose.models.User || mongoose.model("User", UserSchema);

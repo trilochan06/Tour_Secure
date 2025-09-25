@@ -2,7 +2,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import PageContainer from "@/components/PageContainer";
 import { useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/context/AuthContext";
 
 const link =
   "px-3 py-1.5 rounded-md text-sm font-medium hover:bg-neutral-100";

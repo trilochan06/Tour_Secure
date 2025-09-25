@@ -1,7 +1,9 @@
 // frontend/src/lib/api.ts
 export const API_URL = import.meta.env.VITE_API_URL as string;
 // Back-compat for pages that import { API_BASE }
-export const API_BASE = API_URL;
+export const API_BASE =
+  import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
+
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {

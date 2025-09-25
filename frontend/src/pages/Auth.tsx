@@ -4,7 +4,7 @@ import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/context/AuthContext";
 import { NavLink, useNavigate } from "react-router-dom";
 
 export default function AuthPage() {
