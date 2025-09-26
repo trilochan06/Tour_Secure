@@ -1,271 +1,274 @@
-// frontend/src/pages/DigitalID.tsx
 import { useEffect, useState } from "react";
-import { http } from "@/lib/http";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import Loading from "@/components/ui/Loading";
 import { useToast } from "@/components/ui/Toast";
-import WalletAddressInline from "@/components/WalletAddressInline";
 import { useAuth } from "@/context/AuthContext";
+import { createDigitalId, getMyDigitalId, revokeMyDigitalId, refreshQr, extendTrip, uploadDocument } from "@/services/digitalId";
 
-type Entrypoint = "airport" | "hotel" | "checkpost";
-type DocType = "passport" | "aadhaar";
-type Contact = { name: string; phone: string };
-
-type TripResult = {
-  ok: boolean;
+type DigitalId = {
   id: string;
-  tokenId: number;
-  validUntil: number; // epoch seconds
+  walletAddress: string;
+  entrypoint?: string | null;
+  docType?: string | null;
+  startAt: string;
+  endAt: string;
+  status: "active" | "expired" | "revoked";
+  docFilePath?: string | null;
+  qr?: {
+    verifyUrl: string;
+    dataUrl?: string;
+    expiresAt: string;
+  } | null;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
-
-export default function DigitalID() {
-  const { user } = useAuth();
+export default function DigitalIDPage() {
   const { notify } = useToast();
-  const CURRENT_USER_ID = (user as any)?._id || (user as any)?.id || "";
+  const { user } = useAuth();
 
-  // form state
-  const [walletAddress, setWalletAddress] = useState("");
-  const [entrypoint, setEntrypoint] = useState<Entrypoint>("airport");
-  const [docType, setDocType] = useState<DocType>("passport");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
-  const [contacts, setContacts] = useState<Contact[]>([{ name: "", phone: "" }]);
+  const [loading, setLoading] = useState(true);
+  const [digitalId, setDigitalId] = useState<DigitalId | null>(null);
+
+  // form
+  const [entrypoint, setEntrypoint] = useState("Airport");
+  const [docType, setDocType] = useState("Passport");
+  const [startAt, setStartAt] = useState(() => new Date().toISOString().slice(0, 16));
+  const [endAt, setEndAt] = useState(() => {
+    const d = new Date(Date.now() + 72 * 3600 * 1000);
+    return d.toISOString().slice(0, 16);
+  });
+  const [busy, setBusy] = useState(false);
+
+  // extras
+  const [newEndAt, setNewEndAt] = useState(() => new Date(Date.now() + 96 * 3600 * 1000).toISOString().slice(0,16));
   const [file, setFile] = useState<File | null>(null);
 
-  // result state
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string>("");
-  const [trip, setTrip] = useState<null | { id: string; tokenId: number; validUntil: number }>(null);
-  const [qrUrl, setQrUrl] = useState<string>("");
-
-  // Prefill wallet from MetaMask (optional)
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
-        const eth = (window as any).ethereum;
-        if (!eth) return;
-        const accounts = await eth.request({ method: "eth_requestAccounts" });
-        if (accounts?.[0]) setWalletAddress(accounts[0]);
-      } catch {
-        /* ignore */
+        setLoading(true);
+        const current = await getMyDigitalId();
+        if (!alive) return;
+        setDigitalId(current);
+      } catch (e: any) {
+        notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to load Digital ID" });
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
-  }, []);
+    return () => { alive = false; };
+  }, [notify]);
 
-  function updateContact(i: number, key: keyof Contact, val: string) {
-    setContacts((list) => list.map((c, idx) => (idx === i ? { ...c, [key]: val } : c)));
-  }
-
-  async function handleCreate(e: React.FormEvent) {
+  async function onCreate(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
-
-    // basic validation before sending
-    if (!walletAddress) return setError("Wallet address is required.");
-    if (!file) return setError("Attach Aadhaar/Passport file.");
-    if (!startAt || !endAt) return setError("Pick start & end time.");
-
     try {
-      setCreating(true);
-
-      const form = new FormData();
-      form.append("walletAddress", walletAddress);
-      form.append("entrypoint", entrypoint);
-      form.append("docType", docType);
-      form.append("startAt", new Date(startAt).toISOString());
-      form.append("endAt", new Date(endAt).toISOString());
-      form.append(
-        "emergencyContacts",
-        JSON.stringify(contacts.filter((c) => c.name || c.phone))
-      );
-      // IMPORTANT: field name must be "document"
-      form.append("document", file);
-
-      const { data } = await http.post<TripResult>("/digital-id/trips", form, {
-        headers: { "Content-Type": "multipart/form-data" },
+      setBusy(true);
+      const created = await createDigitalId({
+        entrypoint,
+        docType,
+        startAt: new Date(startAt).toISOString(),
+        endAt: new Date(endAt).toISOString(),
       });
-
-      if (!data?.ok) throw new Error("Failed to create Digital ID");
-      setTrip({ id: data.id, tokenId: data.tokenId, validUntil: data.validUntil });
-      setQrUrl(""); // reset QR until user clicks
-
-      notify({ tone: "success", title: "Digital ID created", message: "You can now view the QR." });
+      setDigitalId(created);
+      notify({ tone: "success", title: "Digital ID created", message: "QR is ready and time-bound." });
     } catch (e: any) {
-      const msg = e?.response?.data?.error || e?.message || "Unknown error";
-      setError(msg);
-      notify({ tone: "error", message: msg });
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to create" });
     } finally {
-      setCreating(false);
+      setBusy(false);
     }
   }
 
-  function handleShowQR() {
-    if (!trip?.id) return;
-    // Build absolute URL for the <img> tag
-    setQrUrl(`${API_BASE}/digital-id/trips/${trip.id}/qr?ts=${Date.now()}`);
+  async function onRevoke() {
+    try {
+      setBusy(true);
+      await revokeMyDigitalId();
+      const cur = await getMyDigitalId();
+      setDigitalId(cur);
+    } catch (e: any) {
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to revoke" });
+    } finally {
+      setBusy(false);
+    }
   }
 
+  async function onRefreshQr() {
+    if (!digitalId) return;
+    try {
+      setBusy(true);
+      const updated = await refreshQr(digitalId.id);
+      setDigitalId(updated);
+    } catch (e: any) {
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to refresh QR" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onExtend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!digitalId) return;
+    try {
+      setBusy(true);
+      const updated = await extendTrip(digitalId.id, new Date(newEndAt).toISOString());
+      setDigitalId(updated);
+      notify({ tone: "success", message: "Trip extended and QR updated." });
+    } catch (e: any) {
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Failed to extend trip" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onUpload() {
+    if (!digitalId || !file) return;
+    try {
+      setBusy(true);
+      const updated = await uploadDocument(digitalId.id, file);
+      setDigitalId(updated);
+      notify({ tone: "success", message: "Document uploaded." });
+    } catch (e: any) {
+      notify({ tone: "error", message: e?.response?.data?.error || e?.message || "Upload failed" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const now = Date.now();
+  const activeWindow =
+    digitalId &&
+    new Date(digitalId.startAt).getTime() <= now &&
+    now <= new Date(digitalId.endAt).getTime() &&
+    digitalId.status === "active";
+
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
-      <h1 className="text-2xl font-bold">Digital ID</h1>
+    <>
+      <h1 className="page-title">Digital ID</h1>
 
-      <Card>
-        <CardHeader title="Create a Digital Trip ID" />
-        <CardBody>
-          <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Entrypoint */}
-            <label className="grid gap-2">
-              <span className="text-sm text-neutral-600">Entrypoint</span>
-              <select
-                className="border rounded px-3 py-2"
-                value={entrypoint}
-                onChange={(e) => setEntrypoint(e.target.value as Entrypoint)}
-              >
-                <option value="airport">Airport</option>
-                <option value="hotel">Hotel</option>
-                <option value="checkpost">Checkpost</option>
-              </select>
-            </label>
-
-            {/* DocType */}
-            <label className="grid gap-2">
-              <span className="text-sm text-neutral-600">Document Type</span>
-              <select
-                className="border rounded px-3 py-2"
-                value={docType}
-                onChange={(e) => setDocType(e.target.value as DocType)}
-              >
-                <option value="passport">Passport</option>
-                <option value="aadhaar">Aadhaar</option>
-              </select>
-            </label>
-
-            {/* Start / End */}
-            <label className="grid gap-2">
-              <span className="text-sm text-neutral-600">Start (local)</span>
-              <Input
-                type="datetime-local"
-                value={startAt}
-                onChange={(e) => setStartAt(e.target.value)}
-              />
-            </label>
-            <label className="grid gap-2">
-              <span className="text-sm text-neutral-600">End (local)</span>
-              <Input
-                type="datetime-local"
-                value={endAt}
-                onChange={(e) => setEndAt(e.target.value)}
-              />
-            </label>
-
-            {/* Wallet */}
-            <label className="grid gap-2 md:col-span-2">
-              <span className="text-sm text-neutral-600">Wallet Address</span>
-              <Input
-                placeholder="0x..."
-                value={walletAddress}
-                onChange={(e) => setWalletAddress(e.target.value)}
-              />
-              <div className="mt-2">
-                {/* Inline helper to generate/confirm a wallet and save to profile */}
-                <WalletAddressInline
-                  userId={CURRENT_USER_ID}
-                  value={walletAddress}
-                  onChange={setWalletAddress}
-                />
-              </div>
-            </label>
-
-            {/* File */}
-            <label className="grid gap-2 md:col-span-2">
-              <span className="text-sm text-neutral-600">Aadhaar/Passport File</span>
-              <Input
-                type="file"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-              <span className="text-xs text-neutral-500">
-                Keep it under 5 MB (the backend rejects larger files).
-              </span>
-            </label>
-
-            {/* Emergency contacts */}
-            <div className="md:col-span-2">
-              <div className="text-sm font-semibold mb-2">Emergency Contacts</div>
-              <div className="grid gap-3">
-                {contacts.map((c, i) => (
-                  <div key={i} className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <Input
-                      placeholder="Name"
-                      value={c.name}
-                      onChange={(e) => updateContact(i, "name", e.target.value)}
-                    />
-                    <Input
-                      placeholder="Phone"
-                      value={c.phone}
-                      onChange={(e) => updateContact(i, "phone", e.target.value)}
-                    />
+      {loading ? (
+        <Loading />
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 mt-6">
+          {/* Form */}
+          <Card>
+            <CardHeader title="Create a Digital Trip ID" />
+            <CardBody>
+              <form onSubmit={onCreate} className="grid gap-4">
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">Entrypoint</div>
+                    <Select value={entrypoint} onChange={(e) => setEntrypoint(e.target.value)}>
+                      <option>Airport</option>
+                      <option>Railway Station</option>
+                      <option>Bus Terminal</option>
+                      <option>Border</option>
+                      <option>Hotel</option>
+                      <option>Checkpost</option>
+                    </Select>
                   </div>
-                ))}
-              </div>
-              <div className="mt-3 flex gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setContacts((cs) => [...cs, { name: "", phone: "" }])}
-                >
-                  Add Contact
-                </Button>
-                <Button type="submit" disabled={creating}>
-                  {creating ? "Creating…" : "Create Digital ID"}
-                </Button>
-              </div>
-
-              {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
-            </div>
-          </form>
-        </CardBody>
-      </Card>
-
-      {/* Result */}
-      {trip && (
-        <Card>
-          <CardHeader title="Digital ID Created" />
-          <CardBody>
-            <div className="text-sm grid gap-1">
-              <div><b>Trip ID:</b> {trip.id}</div>
-              <div><b>Token ID:</b> {trip.tokenId}</div>
-              <div><b>Valid Until:</b> {new Date(trip.validUntil * 1000).toLocaleString()}</div>
-            </div>
-
-            <div className="mt-4 flex gap-3">
-              <Button onClick={handleShowQR}>Show QR Code</Button>
-              <a
-                className="underline text-sm"
-                href={`${API_BASE}/digital-id/trips/${trip.id}`}
-                target="_blank"
-              >
-                View Trip JSON
-              </a>
-            </div>
-
-            {qrUrl && (
-              <div className="mt-4">
-                <img
-                  src={qrUrl}
-                  alt="Trip QR"
-                  className="w-64 h-64 border rounded bg-white"
-                />
-                <div className="text-xs text-neutral-500 mt-2">
-                  QR is time-bound. It becomes invalid when the trip ends.
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">Document Type</div>
+                    <Select value={docType} onChange={(e) => setDocType(e.target.value)}>
+                      <option>Passport</option>
+                      <option>Aadhaar</option>
+                      <option>Driver’s License</option>
+                      <option>Govt ID</option>
+                    </Select>
+                  </div>
                 </div>
-              </div>
-            )}
-          </CardBody>
-        </Card>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">Start (local)</div>
+                    <Input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+                  </div>
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">End (local)</div>
+                    <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="text-xs text-neutral-600">
+                  Wallet address is assigned automatically to your account. The QR is valid only between Start and End.
+                </div>
+
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create Digital ID"}</Button>
+                  {digitalId?.status === "active" && (
+                    <Button variant="outline" type="button" disabled={busy} onClick={onRevoke}>
+                      Revoke
+                    </Button>
+                  )}
+                </div>
+              </form>
+            </CardBody>
+          </Card>
+
+          {/* Current DID */}
+          <Card>
+            <CardHeader title="Your Digital ID" />
+            <CardBody>
+              {!digitalId ? (
+                <div className="text-sm text-neutral-600">No Digital ID yet. Create one on the left.</div>
+              ) : (
+                <div className="grid gap-3">
+                  <div className="text-sm grid gap-1">
+                    <div><span className="text-neutral-500">Status:</span> {digitalId.status}</div>
+                    <div><span className="text-neutral-500">Valid:</span> {new Date(digitalId.startAt).toLocaleString()} → {new Date(digitalId.endAt).toLocaleString()}</div>
+                    <div><span className="text-neutral-500">Wallet:</span> {digitalId.walletAddress}</div>
+                    {digitalId.entrypoint && <div><span className="text-neutral-500">Entrypoint:</span> {digitalId.entrypoint}</div>}
+                    {digitalId.docType && <div><span className="text-neutral-500">Doc Type:</span> {digitalId.docType}</div>}
+                    {digitalId.docFilePath && <div><span className="text-neutral-500">Document:</span> {digitalId.docFilePath}</div>}
+                  </div>
+
+                  {/* QR */}
+                  {digitalId.qr?.dataUrl && activeWindow ? (
+                    <div className="mt-2">
+                      <img src={digitalId.qr.dataUrl} alt="Digital ID QR" className="w-56 h-56 border rounded-lg bg-white" />
+                      <div className="text-xs text-neutral-500 mt-2">
+                        QR expires at {new Date(digitalId.qr.expiresAt).toLocaleString()}
+                      </div>
+                      <div className="text-xs">
+                        <a className="underline" href={digitalId.qr.verifyUrl} target="_blank">Open verification URL</a>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-neutral-600">
+                      {digitalId.status !== "active"
+                        ? "Digital ID is not active."
+                        : "QR not available (outside the validity window). Refresh QR if needed."}
+                    </div>
+                  )}
+
+                  {/* Extras */}
+                  <div className="mt-3 grid gap-3">
+                    <div className="flex gap-2">
+                      <Button variant="outline" disabled={busy || !digitalId} onClick={onRefreshQr}>Refresh QR</Button>
+                    </div>
+
+                    <form onSubmit={onExtend} className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <div className="text-xs text-neutral-600 mb-1">Extend End (local)</div>
+                        <Input type="datetime-local" value={newEndAt} onChange={(e) => setNewEndAt(e.target.value)} />
+                      </div>
+                      <Button type="submit" variant="outline" disabled={busy || !digitalId}>Extend Trip</Button>
+                    </form>
+
+                    <div className="flex items-center gap-2">
+                      <Input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                      <Button variant="outline" disabled={busy || !digitalId || !file} onClick={onUpload}>
+                        Upload Document
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       )}
-    </div>
+    </>
   );
 }

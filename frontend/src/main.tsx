@@ -1,4 +1,4 @@
-// src/main.tsx
+// frontend/src/main.tsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
@@ -9,9 +9,7 @@ import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom"
 
 // Providers
 import { ToastProvider } from "@/components/ui/Toast";
-import { AuthProvider } from "@/context/AuthContext";
-// ✅ ADDED: access auth loading state
-import { useAuth } from "@/context/AuthContext";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
 
 // Route guards
 import { RequireAuth, RequireAdmin } from "@/routes/guards";
@@ -30,7 +28,7 @@ import About from "@/pages/About";
 import AuthPage from "@/pages/Auth";
 import AdminDashboard from "@/pages/AdminDashboard";
 
-// ✅ ADDED: gate the router until auth hydrate() finishes
+// Gate the router until auth hydrate() finishes
 function AuthReady({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
   if (loading) {
@@ -43,7 +41,7 @@ function AuthReady({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Router tree (step 5 style)
+// Router tree
 const router = createBrowserRouter([
   {
     element: <AppLayout />,
@@ -104,7 +102,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ToastProvider>
       <AuthProvider>
-        {/* ✅ ADDED: wait for auth hydrate before mounting routes */}
         <AuthReady>
           <RouterProvider router={router} />
         </AuthReady>

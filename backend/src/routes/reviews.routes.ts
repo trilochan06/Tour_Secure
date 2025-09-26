@@ -12,6 +12,16 @@ function clean(s: string) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
+function pickPlaceName(body: any) {
+  return clean(
+    body?.areaName ??
+      body?.place ??
+      body?.name ??
+      body?.location ??
+      ""
+  );
+}
+
 async function findOrCreateArea(name: string) {
   const q = clean(name);
   if (!q) return null;
@@ -39,20 +49,30 @@ async function findOrCreateArea(name: string) {
   });
 }
 
+function toClientReview(r: any) {
+  // normalize a single reliable field for UI
+  const placeName =
+    r?.areaName ||
+    (typeof r?.area === "object" && r?.area?.name) ||
+    null;
+
+  return {
+    id: String(r._id),
+    areaId: r?.area ? String(r.area._id ?? r.area) : null,
+    areaName: r?.areaName ?? null,
+    placeName, // <- UI should read this
+    rating: r.rating,
+    text: r.text || "",
+    createdAt: r.createdAt,
+    userId: r?.userId ? String(r.userId) : null,
+  };
+}
+
 /* ---------- POST /api/reviews ---------- */
 router.post("/", async (req, res, next) => {
   try {
-    console.log("[POST /api/reviews] body=", req.body);
-
     const areaIdRaw = (req.body.areaId ?? req.body.areaID) as string | undefined;
-    const rawName =
-      (req.body.areaName ??
-        req.body.place ??
-        req.body.name ??
-        req.body.location ??
-        "") as string;
-
-    const nameRaw = clean(rawName);
+    const nameRaw = pickPlaceName(req.body);
     const ratingRaw = req.body.rating ?? req.body.stars ?? req.body.score ?? req.body.value;
     const rating = Number(ratingRaw);
     const text = clean(req.body.text ?? req.body.comment ?? req.body.review ?? "");
@@ -71,17 +91,15 @@ router.post("/", async (req, res, next) => {
     let areaDoc: any = null;
     if (areaIdRaw) {
       areaDoc = await SafetyScore.findById(areaIdRaw);
-      if (!areaDoc) {
-        return res.status(404).json({ error: "Area not found for areaId." });
-      }
+      if (!areaDoc) return res.status(404).json({ error: "Area not found for areaId." });
     } else {
       areaDoc = await findOrCreateArea(nameRaw);
     }
 
-    // create review
-    const review = await Review.create({
-      area: areaDoc?._id,
-      areaName: areaDoc?.name ?? nameRaw,
+    // create review (store denormalized areaName for consistent display)
+    const reviewDoc = await Review.create({
+      area: areaDoc?._id,                 // NOTE: field name matches your schema
+      areaName: areaDoc?.name ?? nameRaw, // <- ALWAYS saved
       rating,
       text,
       createdAt: new Date(),
@@ -91,7 +109,7 @@ router.post("/", async (req, res, next) => {
     const recomputeKey = areaDoc?.name ?? nameRaw;
     await recomputeAreaFromReviews(recomputeKey);
 
-    // fetch updated area
+    // fetch updated area for payload
     const refreshed = await SafetyScore.findById(areaDoc._id);
     const areaPayload = refreshed
       ? {
@@ -109,31 +127,42 @@ router.post("/", async (req, res, next) => {
         }
       : null;
 
-    res.status(201).json({ review, area: areaPayload });
+    // normalize review for client (includes placeName)
+    const reviewJson = toClientReview(reviewDoc.toObject());
+
+    res.status(201).json({ ok: true, review: reviewJson, area: areaPayload });
   } catch (err) {
     next(err);
   }
 });
 
-/* ---------- GET /api/reviews ---------- */
+/* ---------- GET /api/reviews (recent) ---------- */
 router.get("/", async (req, res, next) => {
   try {
     const areaId = (req.query.areaId as string | undefined)?.trim();
-    const rawName =
+    const areaName = clean(
       (req.query.areaName as string | undefined) ??
-      (req.query.place as string | undefined) ??
-      (req.query.location as string | undefined) ??
-      "";
-    const areaName = clean(rawName);
+        (req.query.place as string | undefined) ??
+        (req.query.location as string | undefined) ??
+        ""
+    );
     const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
 
     const filter: any = {};
     if (areaId) filter.area = areaId;
     if (areaName) filter.areaName = new RegExp(`^${areaName}$`, "i");
 
-    const items = await Review.find(filter).sort({ createdAt: -1 }).limit(limit);
+    // populate area so we can fallback to area.name if areaName missing
+    const items = await Review.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate({ path: "area", select: "name" }) // only need name
+      .lean();
 
-    res.json(items);
+    // normalize each review for UI
+    const reviews = items.map(toClientReview);
+
+    res.json({ ok: true, reviews });
   } catch (err) {
     next(err);
   }

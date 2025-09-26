@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import User from "../models/User";
+import { getEnv } from "../config/env";
 
 export type Role = "user" | "admin";
 
@@ -14,37 +16,41 @@ export interface AuthedRequest extends Request {
   user?: AuthedUser;
 }
 
-export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
+const env = getEnv();
+const COOKIE_NAME = env.AUTH_COOKIE_NAME;
+const JWT_SECRET = env.JWT_SECRET;
+
+export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   try {
-    const auth = req.headers.authorization || "";
-    const m = auth.match(/^Bearer\s+(.+)$/i);
-    const token = m?.[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const bearer = req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7)
+      : null;
 
-    const secret = process.env.JWT_SECRET;
-    if (!secret) return res.status(500).json({ error: "Server misconfigured (JWT_SECRET)" });
+    const cookieToken = (req as any).cookies?.[COOKIE_NAME];
+    const token = bearer || cookieToken;
+    if (!token) return res.status(401).json({ error: "No token provided" });
 
-    // Your token uses { id, role, email, name }
-    const payload = jwt.verify(token, secret) as {
-      id?: string;
-      role?: Role;
-      email?: string;
-      name?: string;
-      sub?: string;
+    const payload = jwt.verify(token, JWT_SECRET) as {
+      id?: string; sub?: string; role?: Role; email?: string; name?: string;
     };
 
     const id = payload.id || payload.sub;
-    if (!id) return res.status(401).json({ error: "Unauthorized" });
+    if (!id) return res.status(401).json({ error: "Invalid token" });
+
+    const dbUser = await User.findById(id).lean();
+    if (!dbUser) return res.status(401).json({ error: "User not found" });
 
     req.user = {
-      id,
-      email: payload.email,
-      name: payload.name,
-      role: (payload.role as Role) || "user",
+      id: dbUser._id.toString(),
+      email: dbUser.email,
+      name: dbUser.name,
+      role: (dbUser.role as Role) || "user",
     };
 
-    return next();
-  } catch {
+    next();
+  } catch (e: any) {
+    console.error("requireAuth error:", e?.message || e);
     return res.status(401).json({ error: "Unauthorized" });
   }
 }
+  

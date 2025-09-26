@@ -1,3 +1,4 @@
+// frontend/src/pages/Reviews.tsx
 import { useEffect, useMemo, useState } from "react";
 import { http } from "@/lib/http";
 
@@ -14,30 +15,79 @@ import { useToast } from "@/components/ui/Toast";
 /* ---------- types ---------- */
 type Review = {
   _id: string;
-  place: string;
-  rating: number;         // 1..5
+  place: string;           // normalized name for UI
+  rating: number;          // 1..5
   comment?: string;
   createdAt: string;
 };
 
+/* ---------- helpers (normalize API → UI) ---------- */
+function toReviewUI(raw: any): Review | null {
+  if (!raw) return null;
+
+  const id = raw._id || raw.id;
+  const place =
+    raw.placeName ||
+    raw.areaName ||
+    raw.place ||
+    raw?.area?.name ||
+    "—";
+
+  const createdAt =
+    raw.createdAt ||
+    raw.created_at ||
+    new Date().toISOString();
+
+  const comment =
+    raw.comment ??
+    raw.text ??
+    raw.review ??
+    "";
+
+  const rating = Number(raw.rating ?? raw.value ?? raw.stars);
+
+  if (!id || !Number.isFinite(rating)) return null;
+
+  return {
+    _id: String(id),
+    place: String(place),
+    rating,
+    comment: comment ? String(comment) : "",
+    createdAt: new Date(createdAt).toISOString(),
+  };
+}
+
 /* ---------- api helpers ---------- */
 async function fetchReviews(): Promise<Review[]> {
+  // IMPORTANT: baseURL already has /api, so use "/reviews"
   const { data } = await http.get("/reviews");
-  const arr = Array.isArray(data) ? data : (data?.items ?? []);
-  return (arr as Review[]).sort(
+
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.reviews)
+    ? data.reviews
+    : Array.isArray(data?.items)
+    ? data.items
+    : [];
+
+  const mapped = (list as any[]).map(toReviewUI).filter(Boolean) as Review[];
+
+  return mapped.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }
 
 async function createReview(input: { place: string; rating: number; comment?: string }) {
+  // IMPORTANT: baseURL already has /api, so use "/reviews"
   const { data } = await http.post("/reviews", {
-    areaName: input.place,   // backend expects areaName
+    areaName: input.place,
     rating: input.rating,
     text: input.comment,
   });
-  return data;
-}
 
+  const raw = data?.review ?? data;
+  return toReviewUI(raw);
+}
 
 /* ---------- rating stars input ---------- */
 function StarInput({
@@ -61,17 +111,9 @@ function StarInput({
             aria-checked={filled}
             aria-label={`${n} star${n > 1 ? "s" : ""}`}
             onClick={() => onChange(n)}
-            className={`transition ${
-              filled ? "text-yellow-500" : "text-neutral-300 hover:text-neutral-400"
-            }`}
+            className={`transition ${filled ? "text-yellow-500" : "text-neutral-300 hover:text-neutral-400"}`}
           >
-            <svg
-              width={size}
-              height={size}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              aria-hidden="true"
-            >
+            <svg width={size} height={size} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M10 15.27l-5.18 3.05 1.64-5.64L1 8.97l5.91-.5L10 3l3.09 5.47 5.91.5-5.46 3.71 1.64 5.64L10 15.27z" />
             </svg>
           </button>
@@ -132,7 +174,9 @@ export default function Reviews() {
     const q = search.trim().toLowerCase();
     return (items ?? [])
       .filter((r) => r.rating >= minStars)
-      .filter((r) => (q ? r.place.toLowerCase().includes(q) || r.comment?.toLowerCase().includes(q) : true));
+      .filter((r) =>
+        q ? r.place.toLowerCase().includes(q) || r.comment?.toLowerCase().includes(q) : true
+      );
   }, [items, minStars, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -146,9 +190,16 @@ export default function Reviews() {
     }
     try {
       setSubmitting(true);
-      const created = await createReview({ place: place.trim(), rating, comment: comment.trim() || undefined });
-      // optimistic update at the top
-      setItems((s) => [created, ...(s ?? [])]);
+      const created = await createReview({
+        place: place.trim(),
+        rating,
+        comment: comment.trim() || undefined,
+      });
+
+      if (created) {
+        setItems((s) => [created, ...(s ?? [])]); // optimistic add
+      }
+
       setPlace("");
       setRating(5);
       setComment("");
@@ -206,11 +257,17 @@ export default function Reviews() {
                 className="w-56"
                 placeholder="Search place or text…"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
               />
               <Select
                 value={String(minStars)}
-                onChange={(e) => { setMinStars(Number(e.target.value) as any); setPage(1); }}
+                onChange={(e) => {
+                  setMinStars(Number(e.target.value) as any);
+                  setPage(1);
+                }}
               >
                 <option value="0">All ratings</option>
                 <option value="5">5★ only</option>
@@ -232,7 +289,7 @@ export default function Reviews() {
                     <li key={r._id} className="border rounded-xl p-4 bg-white">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="font-semibold truncate">{r.place}</div>
+                          <div className="font-semibold truncate">{r.place || "—"}</div>
                           <div className="text-xs text-neutral-500">
                             {new Date(r.createdAt).toLocaleString()}
                           </div>
@@ -240,6 +297,7 @@ export default function Reviews() {
                         <div className="text-right">
                           <RatingBadge rating={r.rating} />
                           <div className="mt-1">
+                            {/* read-only stars */}
                             <StarInput value={r.rating} onChange={() => {}} size={16} />
                           </div>
                         </div>
@@ -260,10 +318,18 @@ export default function Reviews() {
                       Page {page} of {totalPages} • {filtered.length} total
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                      <Button
+                        variant="outline"
+                        disabled={page === 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
                         Prev
                       </Button>
-                      <Button variant="outline" disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                      <Button
+                        variant="outline"
+                        disabled={page === totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      >
                         Next
                       </Button>
                     </div>

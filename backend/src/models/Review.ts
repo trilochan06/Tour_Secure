@@ -1,25 +1,32 @@
-import { Schema, model, models, type Document, type Model, Types } from "mongoose";
+import mongoose, { Schema, Document } from "mongoose";
 
-export interface ReviewDoc extends Document {
-  area?: Types.ObjectId;      // ref SafetyScore
-  areaName: string;           // canonical or raw
-  rating: number;             // 1..5
+export interface IReview extends Document {
+  rating: number;         // 1..5
   text?: string;
+  areaId?: mongoose.Types.ObjectId | null; // ref -> SafetyScore
+  areaName?: string | null;                // denormalized name
+  userId?: mongoose.Types.ObjectId | null; // optional
   createdAt: Date;
-  updatedAt: Date;
 }
 
-const ReviewSchema = new Schema<ReviewDoc>(
-  {
-    area: { type: Schema.Types.ObjectId, ref: "SafetyScore", index: true },
-    areaName: { type: String, required: true, index: true },
-    rating: { type: Number, required: true, min: 1, max: 5, index: true },
-    text: { type: String },
-  },
-  { timestamps: true }
-);
+const ReviewSchema = new Schema<IReview>({
+  rating: { type: Number, required: true, min: 1, max: 5 },
+  text: { type: String, default: "" },
+  areaId: { type: Schema.Types.ObjectId, ref: "SafetyScore", default: null },
+  areaName: { type: String, default: null }, // <- important for display
+  userId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  createdAt: { type: Date, default: Date.now },
+});
 
-const Review: Model<ReviewDoc> =
-  (models.Review as Model<ReviewDoc>) || model<ReviewDoc>("Review", ReviewSchema);
+// Virtual for consistent UI field
+ReviewSchema.virtual("placeName").get(function (this: IReview) {
+  // prefer denormalized areaName
+  // if you populate areaId later, you can fallback to (this as any).areaId?.name
+  return this.areaName || null;
+});
 
-export default Review;
+ReviewSchema.set("toJSON", { virtuals: true });
+ReviewSchema.set("toObject", { virtuals: true });
+
+export default (mongoose.models.Review as mongoose.Model<IReview>) ||
+  mongoose.model<IReview>("Review", ReviewSchema);
