@@ -4,14 +4,13 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import "leaflet/dist/leaflet.css";
 
-// Router
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 
 // Providers
 import { ToastProvider } from "@/components/ui/Toast";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 
-// Route guards
+// Route guards (single import, no duplicates)
 import { RequireAuth, RequireAdmin } from "@/routes/guards";
 
 // App shell
@@ -28,7 +27,7 @@ import About from "@/pages/About";
 import AuthPage from "@/pages/Auth";
 import AdminDashboard from "@/pages/AdminDashboard";
 
-// Gate the router until auth hydrate() finishes
+// Gate the app until session hydration completes
 function AuthReady({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
   if (loading) {
@@ -41,12 +40,11 @@ function AuthReady({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Router tree
 const router = createBrowserRouter([
   {
     element: <AppLayout />,
     children: [
-      // Auth
+      // Guest auth page
       { path: "/login", element: <AuthPage /> },
 
       // Public
@@ -57,40 +55,12 @@ const router = createBrowserRouter([
       { path: "/about", element: <About /> },
 
       // Private (user)
-      {
-        path: "/itinerary",
-        element: (
-          <RequireAuth>
-            <Itinerary />
-          </RequireAuth>
-        ),
-      },
-      {
-        path: "/efir",
-        element: (
-          <RequireAuth>
-            <EFIR />
-          </RequireAuth>
-        ),
-      },
-      {
-        path: "/digital-id",
-        element: (
-          <RequireAuth>
-            <DigitalID />
-          </RequireAuth>
-        ),
-      },
+      { path: "/itinerary", element: <RequireAuth><Itinerary /></RequireAuth> },
+      { path: "/efir", element: <RequireAuth><EFIR /></RequireAuth> },
+      { path: "/digital-id", element: <RequireAuth><DigitalID /></RequireAuth> },
 
       // Admin-only
-      {
-        path: "/admin",
-        element: (
-          <RequireAdmin>
-            <AdminDashboard />
-          </RequireAdmin>
-        ),
-      },
+      { path: "/admin", element: <RequireAdmin><AdminDashboard /></RequireAdmin> },
 
       // Fallback
       { path: "*", element: <Navigate to="/home" replace /> },

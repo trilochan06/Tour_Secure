@@ -1,3 +1,4 @@
+// backend/src/index.ts
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -22,31 +23,43 @@ async function start() {
   const env = getEnv();
   const app = express();
 
+  // If you're behind a proxy (e.g., Vercel/Nginx) and using secure cookies
   app.set("trust proxy", 1);
 
-  app.use(cors({
-    origin: env.CORS_ORIGINS,
-    credentials: true,
-    methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }));
-  app.options("*", cors({ origin: env.CORS_ORIGINS, credentials: true }));
-
-  app.use(cookieParser());
-  app.use(express.urlencoded({ extended: true })); // accept form posts too
-  app.use(express.json({ limit: "1mb" }));
+  // ---- Core middleware (order matters) ----
   app.use(morgan("dev"));
+  app.use(cookieParser());
+  app.use(express.urlencoded({ extended: true })); // support form posts
+  app.use(express.json({ limit: "1mb" }));
 
-  // Health
-  app.get("/api/health", (_req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
+  // ---- CORS (must be before routes) ----
+  // env.CORS_ORIGINS should be an array; if it's a string, split it.
+  const origins = Array.isArray(env.CORS_ORIGINS)
+    ? env.CORS_ORIGINS
+    : String(env.CORS_ORIGINS || "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
 
-  // TEMP debug for auth payloads (remove once stable)
-  // app.use("/api/auth", (req, _res, next) => { console.log("[AUTH DEBUG]", req.method, req.path, req.headers["content-type"]); console.log("body:", req.body); next(); });
+  app.use(
+    cors({
+      origin: origins,
+      credentials: true, // <-- allow cookies/authorization headers
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization"],
+    })
+  );
+  // Preflight
+  app.options("*", cors({ origin: origins, credentials: true }));
 
-  // Routes
+  // ---- Health ----
+  app.get("/api/health", (_req, res) =>
+    res.json({ status: "ok", time: new Date().toISOString() })
+  );
+
+  // ---- Routes ----
   app.use("/api/geo", geoRouter);
   app.use("/api", miscRouter);
-  app.use("/api/digital-id", digitalIdRouter);
   app.use("/api/auth", authRoutes);
   app.use("/api/alerts", alertsRoutes);
   app.use("/api/admin", adminRoutes);
@@ -54,13 +67,19 @@ async function start() {
   app.use("/api/reviews", reviewsRouter);
   app.use("/api/user", userWalletRouter);
   app.use("/api/efir", efirRouter);
-  app.use("/api/digital-id", digitalIdRouter);
-  if (env.NODE_ENV !== "production") app.use("/api/debug", debugRouter);
+  app.use("/api/digital-id", digitalIdRouter); // mount once only
 
+  if (env.NODE_ENV !== "production") {
+    app.use("/api/debug", debugRouter);
+  }
+
+  // ---- DB then listen ----
   await connectMongo();
 
   app.listen(env.PORT, () => {
     console.log(`✅ API running at http://localhost:${env.PORT}`);
+    console.log(`🔐 CORS origins: ${origins.join(", ") || "(none)"}`);
   });
 }
+
 start();

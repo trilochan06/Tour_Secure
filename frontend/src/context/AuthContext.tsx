@@ -1,65 +1,82 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { login as apiLogin, register as apiRegister, me as apiMe, logout as apiLogout } from "@/services/auth";
+// src/context/AuthContext.tsx
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import * as Auth from "@/services/auth";
 
-type User = { id: string; name: string; email: string; role?: string } | null;
+type Status = "idle" | "loading" | "authenticated" | "unauthenticated";
 
-type AuthCtx = {
-  user: User;
-  loading: boolean;
+type AuthContextType = {
+  user: Auth.User | null;
+  status: Status;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  logout: () => Promise<void>;
 };
 
-const Ctx = createContext<AuthCtx | null>(null);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<Auth.User | null>(null);
+  const [status, setStatus] = useState<Status>("idle");
 
+  // Hydrate session on mount
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      setStatus("loading");
       try {
-        const res = await apiMe();
-        setUser(res.user || res.session || null);
+        const u = await Auth.me();
+        if (!cancelled) {
+          setUser(u);
+          setStatus(u ? "authenticated" : "unauthenticated");
+        }
       } catch {
-        setUser(null);
-      } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setUser(null);
+          setStatus("unauthenticated");
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
-    await apiLogin(email, password);
-    await refresh();
+    const u = await Auth.login(email, password);
+    setUser(u);
+    setStatus("authenticated");
   };
 
   const register = async (name: string, email: string, password: string) => {
-    await apiRegister(name, email, password);
-    await refresh();
+    const u = await Auth.register(name, email, password);
+    setUser(u);
+    setStatus("authenticated");
   };
 
   const refresh = async () => {
-    const res = await apiMe();
-    setUser(res.user || res.session || null);
+    setStatus("loading");
+    const u = await Auth.me();
+    setUser(u);
+    setStatus(u ? "authenticated" : "unauthenticated");
   };
 
   const logout = async () => {
-    await apiLogout();
+    await Auth.logout();
     setUser(null);
+    setStatus("unauthenticated");
   };
 
-  return (
-    <Ctx.Provider value={{ user, loading, login, register, logout, refresh }}>
-      {children}
-    </Ctx.Provider>
+  const value = useMemo(
+    () => ({ user, status, login, register, refresh, logout }),
+    [user, status]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export const useAuth = () => {
-  const v = useContext(Ctx);
-  if (!v) throw new Error("useAuth must be used within <AuthProvider>");
-  return v;
-};
+export function useAuth(): AuthContextType {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}

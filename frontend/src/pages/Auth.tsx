@@ -1,12 +1,12 @@
 // frontend/src/pages/Auth.tsx
 import { useState } from "react";
-import { useNavigate, NavLink } from "react-router-dom";
+import { useNavigate, useLocation, NavLink } from "react-router-dom";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/context/AuthContext";
-import { api } from "@/lib/axios"; // <- IMPORTANT: axios instance with withCredentials: true
+import { api } from "@/lib/axios";
 
 export default function AuthPage() {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -19,8 +19,9 @@ export default function AuthPage() {
 
 function Login({ onSwitch }: { onSwitch: () => void }) {
   const { notify } = useToast();
-  const { refresh } = useAuth(); // cookie-based: call refresh() after server sets cookie
+  const { refresh } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,13 +31,27 @@ function Login({ onSwitch }: { onSwitch: () => void }) {
     e.preventDefault();
     setBusy(true);
     try {
-      // ✅ post JSON to correct path; server sets httpOnly cookie
-      await api.post("/api/auth/login", { email, password });
-      await refresh(); // hit /api/auth/me to hydrate user
-      nav("/");
+      // baseURL must be http://localhost:4000/api (see VITE_API_BASE)
+      console.log("LOGIN →", {
+        baseURL: api.defaults.baseURL,
+        url: "/auth/login",
+        email,
+      });
+      await api.post("/auth/login", { email, password });
+      await refresh();
+      const to = (loc.state as any)?.from?.pathname || "/digital-id";
+      nav(to, { replace: true });
     } catch (e: any) {
+      console.log("LOGIN ERROR", {
+        baseURL: e?.config?.baseURL,
+        url: e?.config?.url,
+        method: e?.config?.method,
+        status: e?.response?.status,
+        data: e?.response?.data,
+      });
       const msg =
         e?.response?.data?.error ||
+        (e?.response?.status === 404 ? "Endpoint not found (check VITE_API_BASE and path)" : null) ||
         e?.message ||
         "Login failed";
       notify({ tone: "error", message: msg });
@@ -57,6 +72,7 @@ function Login({ onSwitch }: { onSwitch: () => void }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="email"
             />
             <Input
               type="password"
@@ -64,6 +80,7 @@ function Login({ onSwitch }: { onSwitch: () => void }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="current-password"
             />
             <div className="flex items-center justify-between">
               <NavLink to="/reset" className="text-sm underline">
@@ -100,8 +117,9 @@ function Login({ onSwitch }: { onSwitch: () => void }) {
 
 function Signup({ onSwitch }: { onSwitch: () => void }) {
   const { notify } = useToast();
-  const { refresh } = useAuth(); // cookie-based session
+  const { refresh } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -113,13 +131,27 @@ function Signup({ onSwitch }: { onSwitch: () => void }) {
     e.preventDefault();
     setBusy(true);
     try {
-      // ✅ include role (your backend supports it)
-      await api.post("/api/auth/register", { name, email, password, role });
+      console.log("REGISTER →", {
+        baseURL: api.defaults.baseURL,
+        url: "/auth/register",
+        email,
+        role,
+      });
+      await api.post("/auth/register", { name, email, password, role });
       await refresh();
-      nav("/");
+      const to = (loc.state as any)?.from?.pathname || "/digital-id";
+      nav(to, { replace: true });
     } catch (e: any) {
+      console.log("REGISTER ERROR", {
+        baseURL: e?.config?.baseURL,
+        url: e?.config?.url,
+        method: e?.config?.method,
+        status: e?.response?.status,
+        data: e?.response?.data,
+      });
       const msg =
         e?.response?.data?.error ||
+        (e?.response?.status === 404 ? "Endpoint not found (check VITE_API_BASE and path)" : null) ||
         e?.message ||
         "Sign-up failed";
       notify({ tone: "error", message: msg });
@@ -139,6 +171,7 @@ function Signup({ onSwitch }: { onSwitch: () => void }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              autoComplete="name"
             />
             <Input
               type="email"
@@ -146,6 +179,7 @@ function Signup({ onSwitch }: { onSwitch: () => void }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="email"
             />
             <Input
               type="password"
@@ -153,6 +187,7 @@ function Signup({ onSwitch }: { onSwitch: () => void }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="new-password"
             />
 
             <div className="text-sm">
@@ -178,11 +213,7 @@ function Signup({ onSwitch }: { onSwitch: () => void }) {
             </div>
 
             <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={onSwitch}
-                className="text-sm underline"
-              >
+              <button type="button" onClick={onSwitch} className="text-sm underline">
                 Have an account?
               </button>
               <Button type="submit" disabled={busy}>
