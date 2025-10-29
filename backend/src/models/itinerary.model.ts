@@ -1,16 +1,28 @@
-import { Schema, model, Document } from 'mongoose';
+// backend/src/models/itinerary.model.ts
+import { Schema, model, Document, Types } from "mongoose";
 
 export interface IItinerary extends Document {
   title: string;
-  date?: string;    // keep simple for now
+  date?: string;          // keep simple string like "YYYY-MM-DD"
   location?: string;
-  createdAt: Date; updatedAt: Date;
+  notes?: string;
+  user: Types.ObjectId;   // <-- owner
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-const ItinerarySchema = new Schema<IItinerary>({
-  title: { type: String, required: true },
-  date: { type: String },
-  location: { type: String }
-}, { timestamps: true });
+const ItinerarySchema = new Schema<IItinerary>(
+  {
+    title: { type: String, required: true, trim: true },
+    date: { type: String },
+    location: { type: String, trim: true },
+    notes: { type: String, trim: true },
+    user: { type: Schema.Types.ObjectId, ref: "User", required: true }, // <-- required
+  },
+  { timestamps: true, collection: "itineraries" }
+);
 
-export default model<IItinerary>('Itinerary', ItinerarySchema);
+// helpful index for fast user-scoped queries
+ItinerarySchema.index({ user: 1, createdAt: -1 });
+
+export default model<IItinerary>("Itinerary", ItinerarySchema);

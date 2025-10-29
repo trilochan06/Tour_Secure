@@ -4,6 +4,7 @@ import SafetyScore from "../models/SafetyScore";
 import Review from "../models/Review";
 import { recomputeAreaFromReviews } from "../services/reviews.service";
 import { calculateSafety } from "../utils/safety";
+import { requireAuth, AuthedRequest } from "../middleware/requireAuth";
 
 const router = Router();
 
@@ -65,11 +66,13 @@ function toClientReview(r: any) {
     text: r.text || "",
     createdAt: r.createdAt,
     userId: r?.userId ? String(r.userId) : null,
+    userName: r?.userName ?? null, // NEW: expose review author name
   };
 }
 
 /* ---------- POST /api/reviews ---------- */
-router.post("/", async (req, res, next) => {
+/* Require auth; attach userId & userName so UI can show author name */
+router.post("/", requireAuth, async (req: AuthedRequest, res, next) => {
   try {
     const areaIdRaw = (req.body.areaId ?? req.body.areaID) as string | undefined;
     const nameRaw = pickPlaceName(req.body);
@@ -96,12 +99,18 @@ router.post("/", async (req, res, next) => {
       areaDoc = await findOrCreateArea(nameRaw);
     }
 
-    // create review (store denormalized areaName for consistent display)
+    // current user (from requireAuth)
+    const user = req.user!;
+    const userName = user.name ?? user.email ?? null;
+
+    // create review (store denormalized areaName + author info)
     const reviewDoc = await Review.create({
       area: areaDoc?._id,                 // NOTE: field name matches your schema
       areaName: areaDoc?.name ?? nameRaw, // <- ALWAYS saved
       rating,
       text,
+      userId: user.id,                    // NEW
+      userName,                           // NEW
       createdAt: new Date(),
     });
 
@@ -110,7 +119,7 @@ router.post("/", async (req, res, next) => {
     await recomputeAreaFromReviews(recomputeKey);
 
     // fetch updated area for payload
-    const refreshed = await SafetyScore.findById(areaDoc._id);
+    const refreshed = areaDoc?._id ? await SafetyScore.findById(areaDoc._id) : null;
     const areaPayload = refreshed
       ? {
           id: String(refreshed._id),
@@ -127,7 +136,7 @@ router.post("/", async (req, res, next) => {
         }
       : null;
 
-    // normalize review for client (includes placeName)
+    // normalize review for client (includes placeName & userName)
     const reviewJson = toClientReview(reviewDoc.toObject());
 
     res.status(201).json({ ok: true, review: reviewJson, area: areaPayload });

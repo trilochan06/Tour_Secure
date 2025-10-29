@@ -18,6 +18,7 @@ import digitalIdRouter from "./routes/digitalId";
 import safetyRouter from "./routes/safety.routes";
 import reviewsRouter from "./routes/reviews.routes";
 import debugRouter from "./routes/debug.routes";
+import itineraryRoutes from "./routes/itinerary.routes";
 
 async function start() {
   const env = getEnv();
@@ -33,24 +34,25 @@ async function start() {
   app.use(express.json({ limit: "1mb" }));
 
   // ---- CORS (must be before routes) ----
-  // env.CORS_ORIGINS should be an array; if it's a string, split it.
+  // env.CORS_ORIGINS may be string or array
   const origins = Array.isArray(env.CORS_ORIGINS)
     ? env.CORS_ORIGINS
     : String(env.CORS_ORIGINS || "")
         .split(",")
-        .map(s => s.trim())
+        .map((s) => s.trim())
         .filter(Boolean);
 
   app.use(
     cors({
-      origin: origins,
-      credentials: true, // <-- allow cookies/authorization headers
+      origin: origins.length ? origins : false, // if empty, disallow all (adjust per need)
+      credentials: true, // allow cookies/authorization headers
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Access-Token"],
+      exposedHeaders: ["Set-Cookie"],
     })
   );
   // Preflight
-  app.options("*", cors({ origin: origins, credentials: true }));
+  app.options("*", cors({ origin: origins.length ? origins : false, credentials: true }));
 
   // ---- Health ----
   app.get("/api/health", (_req, res) =>
@@ -59,7 +61,7 @@ async function start() {
 
   // ---- Routes ----
   app.use("/api/geo", geoRouter);
-  app.use("/api", miscRouter);
+  app.use("/api", miscRouter); // keep legacy misc endpoints under /api/*
   app.use("/api/auth", authRoutes);
   app.use("/api/alerts", alertsRoutes);
   app.use("/api/admin", adminRoutes);
@@ -68,6 +70,7 @@ async function start() {
   app.use("/api/user", userWalletRouter);
   app.use("/api/efir", efirRouter);
   app.use("/api/digital-id", digitalIdRouter); // mount once only
+  app.use("/api/itinerary", itineraryRoutes); // ← NOTE: semicolon
 
   if (env.NODE_ENV !== "production") {
     app.use("/api/debug", debugRouter);
@@ -76,8 +79,9 @@ async function start() {
   // ---- DB then listen ----
   await connectMongo();
 
-  app.listen(env.PORT, () => {
-    console.log(`✅ API running at http://localhost:${env.PORT}`);
+  const port = Number(env.PORT) || 3000;
+  app.listen(port, () => {
+    console.log(`✅ API running at http://localhost:${port}`);
     console.log(`🔐 CORS origins: ${origins.join(", ") || "(none)"}`);
   });
 }

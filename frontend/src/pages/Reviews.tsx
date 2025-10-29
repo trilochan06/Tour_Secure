@@ -9,8 +9,9 @@ import Textarea from "@/components/ui/Textarea";
 import Select from "@/components/ui/Select";
 import Loading from "@/components/ui/Loading";
 import Badge from "@/components/ui/Badge";
-import SafetyScoreCard from "@/components/SafetyScoreCard";
+import SafetyScoreCard from "@/components/SafetyScoreCard"; // keep if you use it elsewhere on this page
 import { useToast } from "@/components/ui/Toast";
+import { useAuth } from "@/context/AuthContext";
 
 /* ---------- types ---------- */
 type Review = {
@@ -19,6 +20,7 @@ type Review = {
   rating: number;          // 1..5
   comment?: string;
   createdAt: string;
+  userName?: string | null; // NEW: author display name
 };
 
 /* ---------- helpers (normalize API → UI) ---------- */
@@ -26,6 +28,7 @@ function toReviewUI(raw: any): Review | null {
   if (!raw) return null;
 
   const id = raw._id || raw.id;
+
   const place =
     raw.placeName ||
     raw.areaName ||
@@ -46,6 +49,12 @@ function toReviewUI(raw: any): Review | null {
 
   const rating = Number(raw.rating ?? raw.value ?? raw.stars);
 
+  // NEW: prefer backend's denormalized userName; fall back to nested user object if present
+  const userName: string | null =
+    (typeof raw.userName === "string" && raw.userName) ||
+    (raw.user && (raw.user.name || raw.user.email)) ||
+    null;
+
   if (!id || !Number.isFinite(rating)) return null;
 
   return {
@@ -54,6 +63,7 @@ function toReviewUI(raw: any): Review | null {
     rating,
     comment: comment ? String(comment) : "",
     createdAt: new Date(createdAt).toISOString(),
+    userName,
   };
 }
 
@@ -94,10 +104,12 @@ function StarInput({
   value,
   onChange,
   size = 22,
+  readOnly = false,
 }: {
   value: number;
   onChange: (n: number) => void;
   size?: number;
+  readOnly?: boolean;
 }) {
   return (
     <div className="inline-flex items-center gap-1" role="radiogroup" aria-label="Rating">
@@ -110,8 +122,9 @@ function StarInput({
             role="radio"
             aria-checked={filled}
             aria-label={`${n} star${n > 1 ? "s" : ""}`}
-            onClick={() => onChange(n)}
-            className={`transition ${filled ? "text-yellow-500" : "text-neutral-300 hover:text-neutral-400"}`}
+            onClick={() => !readOnly && onChange(n)}
+            disabled={readOnly}
+            className={`transition ${filled ? "text-yellow-500" : "text-neutral-300 hover:text-neutral-400"} ${readOnly ? "cursor-default" : ""}`}
           >
             <svg width={size} height={size} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path d="M10 15.27l-5.18 3.05 1.64-5.64L1 8.97l5.91-.5L10 3l3.09 5.47 5.91.5-5.46 3.71 1.64 5.64L10 15.27z" />
@@ -132,6 +145,7 @@ function RatingBadge({ rating }: { rating: number }) {
 /* ---------- page ---------- */
 export default function Reviews() {
   const { notify } = useToast();
+  const { user } = useAuth();
 
   // list state
   const [items, setItems] = useState<Review[] | null>(null);
@@ -184,6 +198,12 @@ export default function Reviews() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!user) {
+      notify({ tone: "warning", message: "Please login to submit a review." });
+      return;
+    }
+
     if (!place.trim()) {
       notify({ tone: "warning", message: "Place is required." });
       return;
@@ -206,7 +226,8 @@ export default function Reviews() {
       setPage(1);
       notify({ tone: "success", title: "Thanks!", message: "Your review has been added." });
     } catch (e: any) {
-      notify({ tone: "error", message: e?.message ?? "Failed to submit review" });
+      const msg = e?.response?.data?.error || e?.message || "Failed to submit review";
+      notify({ tone: "error", message: msg });
     } finally {
       setSubmitting(false);
     }
@@ -240,9 +261,15 @@ export default function Reviews() {
                 onChange={(e) => setComment(e.target.value)}
               />
 
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Submitting…" : "Submit"}
+              <Button type="submit" disabled={submitting || !user}>
+                {submitting ? "Submitting…" : user ? "Submit" : "Login to submit"}
               </Button>
+
+              {!user && (
+                <div className="text-xs text-neutral-500">
+                  You must be logged in to post a review.
+                </div>
+              )}
             </form>
           </CardBody>
         </Card>
@@ -291,6 +318,12 @@ export default function Reviews() {
                         <div className="min-w-0">
                           <div className="font-semibold truncate">{r.place || "—"}</div>
                           <div className="text-xs text-neutral-500">
+                            {/* NEW: show author name if present */}
+                            {r.userName ? (
+                              <>
+                                by <span className="font-medium">{r.userName}</span> ·{" "}
+                              </>
+                            ) : null}
                             {new Date(r.createdAt).toLocaleString()}
                           </div>
                         </div>
@@ -298,7 +331,7 @@ export default function Reviews() {
                           <RatingBadge rating={r.rating} />
                           <div className="mt-1">
                             {/* read-only stars */}
-                            <StarInput value={r.rating} onChange={() => {}} size={16} />
+                            <StarInput value={r.rating} onChange={() => {}} size={16} readOnly />
                           </div>
                         </div>
                       </div>

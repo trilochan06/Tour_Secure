@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import PageContainer from "@/components/PageContainer";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { http } from "@/lib/http";
 
 const linkBase =
   "px-3 py-1.5 rounded-md text-sm font-medium hover:bg-neutral-100";
@@ -15,6 +16,11 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
 
+  // user-specific visibility flags
+  const [hasItinerary, setHasItinerary] = useState(false);
+  const [hasEFIR, setHasEFIR] = useState(false);
+  const [checking, setChecking] = useState(false);
+
   // Close mobile drawer on route change
   useEffect(() => {
     if (open) setOpen(false);
@@ -23,10 +29,71 @@ export default function AppLayout() {
   const handleLogout = async () => {
     try {
       await logout();
-    } catch (_) {
-      // no-op; keep UI responsive even if network hiccups
+    } catch {
+      // no-op
     }
   };
+
+  // Helper: try a list of candidate API paths and return first count we can read
+  const getCountFromCandidates = async (candidates: string[]): Promise<number> => {
+    for (const path of candidates) {
+      try {
+        const { data, status } = await http.get(path);
+        if (status >= 200 && status < 300) {
+          const arr = Array.isArray(data) ? data : (data?.items ?? []);
+          if (Array.isArray(arr)) return arr.length;
+        }
+      } catch (e: any) {
+        // ignore and try next candidate
+      }
+    }
+    return 0;
+  };
+
+  // Check if the logged-in user has at least one itinerary/e-FIR
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkUserData() {
+      if (!user) {
+        if (!cancelled) {
+          setHasItinerary(false);
+          setHasEFIR(false);
+        }
+        return;
+      }
+
+      setChecking(true);
+
+      // If your backend has different mount points, these candidates cover common cases.
+      const itineraryCandidates = [
+        "/itinerary",          // e.g., app uses /api baseURL -> /api/itinerary
+        "/misc/itinerary",     // if routes were mounted as /api/misc
+        "/user/itinerary"      // if user-scoped controller
+      ];
+      const efirCandidates = [
+        "/efir",
+        "/misc/efir",
+        "/user/efir"
+      ];
+
+      const [itCount, efCount] = await Promise.all([
+        getCountFromCandidates(itineraryCandidates),
+        getCountFromCandidates(efirCandidates),
+      ]);
+
+      if (!cancelled) {
+        setHasItinerary(itCount > 0);
+        setHasEFIR(efCount > 0);
+        setChecking(false);
+      }
+    }
+
+    checkUserData();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   return (
     <div className="min-h-dvh flex flex-col">
@@ -68,12 +135,19 @@ export default function AppLayout() {
             <NavLink to="/reviews" className={linkClass}>
               Reviews
             </NavLink>
-            <NavLink to="/itinerary" className={linkClass}>
-              Itinerary
-            </NavLink>
-            <NavLink to="/efir" className={linkClass}>
-              e-FIR
-            </NavLink>
+
+            {/* Show only after the user has created at least one item */}
+            {user && hasItinerary && (
+              <NavLink to="/itinerary" className={linkClass}>
+                Itinerary
+              </NavLink>
+            )}
+            {user && hasEFIR && (
+              <NavLink to="/efir" className={linkClass}>
+                e-FIR
+              </NavLink>
+            )}
+
             <NavLink to="/digital-id" className={linkClass}>
               Digital ID
             </NavLink>
@@ -88,7 +162,27 @@ export default function AppLayout() {
           </nav>
 
           {/* Auth controls */}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
+            {/* If user is logged in but has no data yet, show small CTAs so they can create the first item. */}
+            {user && !checking && !hasItinerary && (
+              <NavLink
+                to="/itinerary"
+                className="text-xs underline text-neutral-700 hover:text-black"
+                title="Create your first itinerary"
+              >
+                Create Itinerary
+              </NavLink>
+            )}
+            {user && !checking && !hasEFIR && (
+              <NavLink
+                to="/efir"
+                className="text-xs underline text-neutral-700 hover:text-black"
+                title="File your first e-FIR"
+              >
+                File e-FIR
+              </NavLink>
+            )}
+
             {user ? (
               <>
                 <span className="text-sm text-neutral-600">
@@ -110,28 +204,84 @@ export default function AppLayout() {
         {open && (
           <div id="mobile-nav" className="md:hidden border-t bg-white">
             <nav className="px-4 py-2 grid gap-1">
-              {[
-                ["/", "Home", true],
-                ["/heatmap", "Heatmap"],
-                ["/reviews", "Reviews"],
-                ["/itinerary", "Itinerary"],
-                ["/efir", "e-FIR"],
-                ["/digital-id", "Digital ID"],
-                ["/about", "About"],
-              ].map(([to, label, end]) => (
+              <NavLink
+                to="/"
+                end
+                className={({ isActive }) =>
+                  isActive
+                    ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                    : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                }
+              >
+                Home
+              </NavLink>
+              <NavLink
+                to="/heatmap"
+                className={({ isActive }) =>
+                  isActive
+                    ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                    : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                }
+              >
+                Heatmap
+              </NavLink>
+              <NavLink
+                to="/reviews"
+                className={({ isActive }) =>
+                  isActive
+                    ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                    : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                }
+              >
+                Reviews
+              </NavLink>
+
+              {/* Tabs still hidden until there's data */}
+              {user && hasItinerary && (
                 <NavLink
-                  key={to as string}
-                  to={to as string}
-                  end={Boolean(end)}
+                  to="/itinerary"
                   className={({ isActive }) =>
                     isActive
                       ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
                       : "px-3 py-2 rounded-md hover:bg-neutral-100"
                   }
                 >
-                  {label as string}
+                  Itinerary
                 </NavLink>
-              ))}
+              )}
+              {user && hasEFIR && (
+                <NavLink
+                  to="/efir"
+                  className={({ isActive }) =>
+                    isActive
+                      ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                      : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                  }
+                >
+                  e-FIR
+                </NavLink>
+              )}
+
+              <NavLink
+                to="/digital-id"
+                className={({ isActive }) =>
+                  isActive
+                    ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                    : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                }
+              >
+                Digital ID
+              </NavLink>
+              <NavLink
+                to="/about"
+                className={({ isActive }) =>
+                  isActive
+                    ? "px-3 py-2 rounded-md bg-neutral-900 text-white"
+                    : "px-3 py-2 rounded-md hover:bg-neutral-100"
+                }
+              >
+                About
+              </NavLink>
 
               {user?.role === "admin" && (
                 <NavLink
@@ -147,12 +297,31 @@ export default function AppLayout() {
               )}
 
               {user ? (
-                <button
-                  onClick={handleLogout}
-                  className="px-3 py-2 rounded-md text-left hover:bg-neutral-100"
-                >
-                  Logout
-                </button>
+                <>
+                  {/* Mobile CTAs so you can create first items */}
+                  {!hasItinerary && (
+                    <NavLink
+                      to="/itinerary"
+                      className="px-3 py-2 rounded-md hover:bg-neutral-100"
+                    >
+                      Create Itinerary
+                    </NavLink>
+                  )}
+                  {!hasEFIR && (
+                    <NavLink
+                      to="/efir"
+                      className="px-3 py-2 rounded-md hover:bg-neutral-100"
+                    >
+                      File e-FIR
+                    </NavLink>
+                  )}
+                  <button
+                    onClick={handleLogout}
+                    className="px-3 py-2 rounded-md text-left hover:bg-neutral-100"
+                  >
+                    Logout
+                  </button>
+                </>
               ) : (
                 <NavLink
                   to="/login"
