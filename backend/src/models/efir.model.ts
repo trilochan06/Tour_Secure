@@ -1,24 +1,43 @@
-import { Schema, model, Document, Types } from 'mongoose';
+import { Schema, model, Document, Types } from "mongoose";
 
-export interface IEFIR extends Document {
-  subject: string;        // a concise subject (renamed from "name")
-  description: string;
-  location?: string;
-  status: 'Pending' | 'Filed' | 'Closed';
-  user: Types.ObjectId;   // owner
+export interface IEfir extends Document {
+  name?: string;
+  contact?: string;
+  summary: string;
+  attachments?: string[];
+  location?: {
+    lat?: number;
+    lng?: number;
+  };
+  status: "Pending" | "Submitted" | "Closed";
+  user: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const EFIRSchema = new Schema<IEFIR>(
+const EfirSchema = new Schema<IEfir>(
   {
-    subject: { type: String, required: true, trim: true },
-    description: { type: String, required: true, trim: true },
-    location: { type: String, trim: true },
-    status: { type: String, enum: ['Pending', 'Filed', 'Closed'], default: 'Pending' },
-    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    name: { type: String, trim: true },
+    contact: { type: String, trim: true },
+
+    // 🔧 Make summary optional with a safe default so it never blocks writes.
+    summary: { type: String, trim: true, default: "" },
+
+    attachments: [{ type: String }],
+    location: {
+      lat: { type: Number },
+      lng: { type: Number },
+    },
+    status: {
+      type: String,
+      enum: ["Pending", "Submitted", "Closed"],
+      default: "Pending",
+    },
+    user: { type: Schema.Types.ObjectId, ref: "User", required: true },
   },
-  { timestamps: true, collection: 'efirs_user_simple' } // separate from older EFIR model
+  { timestamps: true, collection: "efir_reports" }
 );
 
-export default model<IEFIR>('EFIR_User', EFIRSchema);
+EfirSchema.index({ user: 1, createdAt: -1 });
+
+export default model<IEfir>("Efir", EfirSchema);

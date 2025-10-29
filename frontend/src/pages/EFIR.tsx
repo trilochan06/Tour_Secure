@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { http } from '@/lib/http';
+import { http } from "@/lib/http";
 import { API_BASE } from "@/lib/api";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -9,12 +9,14 @@ import Loading from "@/components/ui/Loading";
 import Badge from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { MapPin } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 type EFIRDoc = {
   _id: string;
-  name: string;
+  name?: string;
   contact?: string;
-  description: string;
+  summary: string;
+  status: string;
   createdAt: string;
 };
 
@@ -22,12 +24,13 @@ const STORAGE_KEY = "efir_draft_v2";
 const MAX_LEN = 1000;
 
 export default function EFIR() {
+  const { user } = useAuth();
   const { notify } = useToast();
 
   // form state
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
-  const [description, setDescription] = useState("");
+  const [summary, setSummary] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -45,36 +48,50 @@ export default function EFIR() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const d = JSON.parse(raw) as { name: string; contact: string; description: string };
+        const d = JSON.parse(raw) as { name: string; contact: string; summary: string };
         setName(d.name || "");
         setContact(d.contact || "");
-        setDescription(d.description || "");
+        setSummary(d.summary || "");
       }
     } catch {}
   }, []);
 
   // autosave draft
   useEffect(() => {
-    const draft = JSON.stringify({ name, contact, description });
+    const draft = JSON.stringify({ name, contact, summary });
     localStorage.setItem(STORAGE_KEY, draft);
-  }, [name, contact, description]);
+  }, [name, contact, summary]);
 
   function clearDraft() {
     localStorage.removeItem(STORAGE_KEY);
     setName("");
     setContact("");
-    setDescription("");
+    setSummary("");
     setFiles([]);
     notify({ tone: "info", title: "Draft cleared", message: "All fields reset." });
   }
 
+  /** ---------- load EFIR list ---------- */
   async function load() {
     setLoading(true);
     try {
-      const { data } = await http.get<EFIRDoc[]>(`${API_BASE}/efir`);
-      // newest first
+      const { data } = await http.get(`${API_BASE}/efir`);
+      const listData = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+        ? data.items
+        : [];
       setList(
-        data.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+        listData
+          .map((d: any) => ({
+            _id: d._id,
+            name: d.name,
+            contact: d.contact,
+            summary: d.summary || d.description || "",
+            status: d.status || "Pending",
+            createdAt: d.createdAt || new Date().toISOString(),
+          }))
+          .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
       );
     } catch (e: any) {
       notify({ tone: "error", message: e?.message ?? "Failed to load e-FIRs" });
@@ -82,10 +99,13 @@ export default function EFIR() {
       setLoading(false);
     }
   }
-  useEffect(() => {
-    load();
-  }, []);
 
+  useEffect(() => {
+    if (user) load();
+    else setLoading(false);
+  }, [user]);
+
+  /** ---------- use my location ---------- */
   async function useMyLocation() {
     if (!navigator.geolocation) {
       notify({ tone: "warning", message: "Geolocation not supported." });
@@ -94,7 +114,7 @@ export default function EFIR() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const add = `\n\nLocation: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
-        setDescription((s) => (s.includes("Location:") ? s : (s + add).trimStart()));
+        setSummary((s) => (s.includes("Location:") ? s : (s + add).trimStart()));
         notify({ tone: "success", message: "Coordinates added to report." });
       },
       (err) => notify({ tone: "error", message: err.message })
@@ -103,20 +123,21 @@ export default function EFIR() {
 
   function onPickFiles(fs: FileList | null) {
     if (!fs || !fs.length) return;
-    const arr = Array.from(fs).slice(0, 10); // cap at 10
+    const arr = Array.from(fs).slice(0, 10);
     setFiles(arr);
   }
 
-  const descCount = description.length;
-  const descTooLong = descCount > MAX_LEN;
+  const summaryCount = summary.length;
+  const summaryTooLong = summaryCount > MAX_LEN;
 
   function validate(): string | null {
     if (!name.trim()) return "Name is required.";
-    if (!description.trim()) return "Description is required.";
-    if (descTooLong) return `Description is too long (max ${MAX_LEN} chars).`;
+    if (!summary.trim()) return "Description is required.";
+    if (summaryTooLong) return `Description is too long (max ${MAX_LEN} chars).`;
     return null;
   }
 
+  /** ---------- submit EFIR ---------- */
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const err = validate();
@@ -125,17 +146,26 @@ export default function EFIR() {
       return;
     }
 
+    if (!user) {
+      notify({ tone: "warning", message: "Please login before submitting an e-FIR." });
+      return;
+    }
+
     setBusy(true);
     try {
-      // For now backend expects name, contact, description.
-      // Append filenames (if any) to description so they’re recorded.
-      let body = description.trim();
+      let attachments: string[] = [];
       if (files.length) {
-        const names = files.map((f) => f.name).join(", ");
-        body += `\n\nAttachments: ${names}`;
+        attachments = files.map((f) => f.name);
       }
 
-      await http.post(`${API_BASE}/efir`, { name: name.trim(), contact: contact.trim() || undefined, description: body });
+      const body = {
+        name: name.trim(),
+        contact: contact.trim() || undefined,
+        summary: summary.trim(),
+        attachments,
+      };
+
+      await http.post(`${API_BASE}/efir`, body);
 
       notify({ tone: "success", title: "Submitted", message: "Your e-FIR has been recorded." });
       clearDraft();
@@ -153,9 +183,9 @@ export default function EFIR() {
     return list.filter(
       (it) =>
         !ql ||
-        it.name.toLowerCase().includes(ql) ||
+        it.name?.toLowerCase().includes(ql) ||
         it.contact?.toLowerCase().includes(ql) ||
-        it.description.toLowerCase().includes(ql)
+        it.summary.toLowerCase().includes(ql)
     );
   }, [list, q]);
 
@@ -176,7 +206,9 @@ export default function EFIR() {
                 <Button variant="outline" onClick={useMyLocation}>
                   <MapPin size={16} className="mr-1" /> Use my location
                 </Button>
-                <Button variant="outline" onClick={clearDraft}>Clear Draft</Button>
+                <Button variant="outline" onClick={clearDraft}>
+                  Clear Draft
+                </Button>
               </div>
             }
           />
@@ -191,12 +223,12 @@ export default function EFIR() {
                 <Textarea
                   className="h-40"
                   placeholder="Describe the incident. Add place, time, people involved, and any identifiers."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  value={summary}
+                  onChange={(e) => setSummary(e.target.value)}
                   required
                 />
-                <div className={`mt-1 text-xs ${descTooLong ? "text-red-600" : "text-neutral-500"}`}>
-                  {descCount}/{MAX_LEN}
+                <div className={`mt-1 text-xs ${summaryTooLong ? "text-red-600" : "text-neutral-500"}`}>
+                  {summaryCount}/{MAX_LEN}
                 </div>
               </div>
 
@@ -223,7 +255,7 @@ export default function EFIR() {
                   Do not include sensitive info you don’t wish to store.
                 </div>
                 <Button type="submit" disabled={busy || !!validate()}>
-                  {busy ? "Submitting…" : "Submit"}
+                  {busy ? "Submitting…" : user ? "Submit" : "Login to submit"}
                 </Button>
               </div>
             </form>
@@ -260,7 +292,9 @@ export default function EFIR() {
             />
             <div className="flex-1" />
             {totalPages > 1 && (
-              <div className="text-xs text-neutral-500">Page {page} of {totalPages}</div>
+              <div className="text-xs text-neutral-500">
+                Page {page} of {totalPages}
+              </div>
             )}
           </div>
 
@@ -275,17 +309,17 @@ export default function EFIR() {
                   <li key={item._id} className="border rounded-xl p-4 bg-white">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-semibold truncate">{item.name}</div>
+                        <div className="font-semibold truncate">{item.name || "Anonymous"}</div>
                         {item.contact ? (
                           <div className="text-xs text-neutral-500">Contact: {item.contact}</div>
                         ) : null}
                         <div className="text-xs text-neutral-500">
-                          {new Date(item.createdAt).toLocaleString()}
+                          {new Date(item.createdAt).toLocaleString()} • {item.status}
                         </div>
                       </div>
                     </div>
                     <p className="mt-3 text-sm text-neutral-800 whitespace-pre-wrap break-words">
-                      {item.description}
+                      {item.summary}
                     </p>
                   </li>
                 ))}
@@ -293,9 +327,7 @@ export default function EFIR() {
 
               {totalPages > 1 && (
                 <div className="mt-4 flex items-center justify-between">
-                  <div className="text-xs text-neutral-500">
-                    {filtered.length} total
-                  </div>
+                  <div className="text-xs text-neutral-500">{filtered.length} total</div>
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"

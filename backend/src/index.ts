@@ -6,7 +6,7 @@ import cookieParser from "cookie-parser";
 import { getEnv } from "./config/env";
 import { connectMongo } from "./config/db";
 
-// Routers
+// ---- Routers ----
 import authRoutes from "./routes/auth.routes";
 import alertsRoutes from "./routes/alerts.routes";
 import adminRoutes from "./routes/admin.routes";
@@ -17,8 +17,8 @@ import miscRouter from "./routes/misc.routes";
 import digitalIdRouter from "./routes/digitalId";
 import safetyRouter from "./routes/safety.routes";
 import reviewsRouter from "./routes/reviews.routes";
-import debugRouter from "./routes/debug.routes";
-import itineraryRoutes from "./routes/itinerary.routes";
+import debugRouter from "./routes/debug.routes"; // ✅ use existing file name (no underscore)
+import itineraryRoutes from "./routes/itinerary.routes"; // ✅ user-specific itinerary
 
 async function start() {
   const env = getEnv();
@@ -34,7 +34,6 @@ async function start() {
   app.use(express.json({ limit: "1mb" }));
 
   // ---- CORS (must be before routes) ----
-  // env.CORS_ORIGINS may be string or array
   const origins = Array.isArray(env.CORS_ORIGINS)
     ? env.CORS_ORIGINS
     : String(env.CORS_ORIGINS || "")
@@ -44,8 +43,8 @@ async function start() {
 
   app.use(
     cors({
-      origin: origins.length ? origins : false, // if empty, disallow all (adjust per need)
-      credentials: true, // allow cookies/authorization headers
+      origin: origins.length ? origins : false,
+      credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "X-Access-Token"],
       exposedHeaders: ["Set-Cookie"],
@@ -61,7 +60,7 @@ async function start() {
 
   // ---- Routes ----
   app.use("/api/geo", geoRouter);
-  app.use("/api", miscRouter); // keep legacy misc endpoints under /api/*
+  app.use("/api", miscRouter); // legacy misc endpoints
   app.use("/api/auth", authRoutes);
   app.use("/api/alerts", alertsRoutes);
   app.use("/api/admin", adminRoutes);
@@ -69,9 +68,10 @@ async function start() {
   app.use("/api/reviews", reviewsRouter);
   app.use("/api/user", userWalletRouter);
   app.use("/api/efir", efirRouter);
-  app.use("/api/digital-id", digitalIdRouter); // mount once only
-  app.use("/api/itinerary", itineraryRoutes); // ← NOTE: semicolon
+  app.use("/api/digital-id", digitalIdRouter);
+  app.use("/api/itinerary", itineraryRoutes); // ✅ itinerary routes
 
+  // ---- Debug (only in dev) ----
   if (env.NODE_ENV !== "production") {
     app.use("/api/debug", debugRouter);
   }
@@ -79,7 +79,7 @@ async function start() {
   // ---- DB then listen ----
   await connectMongo();
 
-  const port = Number(env.PORT) || 3000;
+  const port = Number(env.PORT) || 4000;
   app.listen(port, () => {
     console.log(`✅ API running at http://localhost:${port}`);
     console.log(`🔐 CORS origins: ${origins.join(", ") || "(none)"}`);

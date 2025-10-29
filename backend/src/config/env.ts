@@ -1,37 +1,104 @@
 // backend/src/config/env.ts
-import "dotenv/config";
 
-function required(label: string, val?: string) {
-  if (!val) throw new Error(`Missing required env var: ${label}`);
-  return val;
+type Env = {
+  PORT: number;
+  NODE_ENV: "development" | "production" | "test";
+  // Normalized canonical field we’ll use everywhere else:
+  MONGO_URL: string;
+
+  CORS_ORIGINS: string[]; // parsed list
+  SERVER_BASE_URL?: string;
+
+  JWT_SECRET: string;
+  JWT_EXPIRES_DAYS: number;
+  AUTH_COOKIE_NAME: string;
+
+  FILE_STORAGE_DIR?: string;
+
+  CONTRACT_ADDRESS?: string;
+  BLOCKCHAIN_RPC?: string;
+  BLOCKCHAIN_PRIVATE_KEY?: string;
+};
+
+function required(name: string, v: string | undefined): string {
+  if (v === undefined || v === null || String(v).trim() === "") {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+  return String(v);
 }
 
-export function getEnv() {
-  const PORT = Number(process.env.PORT || 4000);
-  const NODE_ENV = process.env.NODE_ENV || "development";
+function parseNumber(name: string, v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  // Accept either MONGO_URI or MONGODB_URI
-  const MONGO_URI = required(
-    "MONGO_URI or MONGODB_URI",
-    process.env.MONGO_URI || process.env.MONGODB_URI
-  );
-
-  const CORS_ORIGINS = (process.env.CORS_ORIGINS || "")
+function parseOrigins(v: string | string[] | undefined): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  return String(v)
     .split(",")
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
+}
 
-  const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "ts_sess";
-  const JWT_SECRET = required("JWT_SECRET", process.env.JWT_SECRET);
-  const JWT_EXPIRES_DAYS = Number(process.env.JWT_EXPIRES_DAYS || 7);
-
-  return {
+/**
+ * Normalize env and support multiple Mongo var names:
+ * - MONGO_URL (preferred)
+ * - MONGO_URI
+ * - MONGODB_URI
+ */
+export function getEnv(): Env {
+  const {
     PORT,
     NODE_ENV,
+    // DB names that might exist (support all)
+    MONGO_URL,
     MONGO_URI,
+    MONGODB_URI,
+
     CORS_ORIGINS,
-    AUTH_COOKIE_NAME,
+    SERVER_BASE_URL,
+
     JWT_SECRET,
     JWT_EXPIRES_DAYS,
+    AUTH_COOKIE_NAME,
+
+    FILE_STORAGE_DIR,
+
+    CONTRACT_ADDRESS,
+    BLOCKCHAIN_RPC,
+    BLOCKCHAIN_PRIVATE_KEY,
+  } = process.env as NodeJS.ProcessEnv & Record<string, string>;
+
+  // Pick the first non-empty among the three; prefer MONGO_URL if present
+  const mongoUrl =
+    (MONGO_URL && String(MONGO_URL).trim()) ||
+    (MONGO_URI && String(MONGO_URI).trim()) ||
+    (MONGODB_URI && String(MONGODB_URI).trim());
+
+  if (!mongoUrl) {
+    // Keep the exact message your previous code showed, but add a hint:
+    throw new Error(
+      "Missing required env var: MONGO_URI or MONGODB_URI (hint: MONGO_URL is also supported)"
+    );
+  }
+
+  return {
+    PORT: parseNumber("PORT", PORT, 4000),
+    NODE_ENV: (NODE_ENV as Env["NODE_ENV"]) || "development",
+    MONGO_URL: mongoUrl,
+
+    CORS_ORIGINS: parseOrigins(CORS_ORIGINS),
+    SERVER_BASE_URL,
+
+    JWT_SECRET: required("JWT_SECRET", JWT_SECRET),
+    JWT_EXPIRES_DAYS: parseNumber("JWT_EXPIRES_DAYS", JWT_EXPIRES_DAYS, 7),
+    AUTH_COOKIE_NAME: required("AUTH_COOKIE_NAME", AUTH_COOKIE_NAME),
+
+    FILE_STORAGE_DIR,
+
+    CONTRACT_ADDRESS,
+    BLOCKCHAIN_RPC,
+    BLOCKCHAIN_PRIVATE_KEY,
   };
 }
